@@ -1,9 +1,6 @@
-DFPlayerMini_Fast.h
-1.2.4
-
 REPLACE
 DFPlayer - A Mini MP3 Player For Arduino
-1.0.0
+1.0.5
 
 https://github.com/DFRobot/DFRobotDFPlayerMini
 
