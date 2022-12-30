@@ -1,10 +1,14 @@
 #include "Arduino.h"
 #include "SoftwareSerial.h"
-#include "DFRobotDFPlayerMini.h"
+#include <DFMiniMp3.h>
 #include "MPU9250.h"
 #include "NonBlockingDelay.h"
 
-// ---------------------------- MP3 Directory -------------------------------
+// ---------------------------- PINOUT -------------------------------
+#define MP3_RX_PIN 10
+#define MP3_TX_PIN 11
+
+// ---------------------------- MP3 -------------------------------
 #define GENERAL_SOUND_FOLDER 1
 #define BOOT_SOUND 1
 #define CHANGE_COLOR_SOUND 2
@@ -21,8 +25,14 @@
 #define CLASH_SOUND_FOLDER 4
 #define NUM_CLASH_SOUND 16
 
-#define SWING_SOUND_FOLDER 4
+#define SWING_SOUND_FOLDER 5
 #define NUM_SWING_SOUND 16
+
+class Mp3Notify;
+SoftwareSerial softSerial(MP3_RX_PIN, MP3_TX_PIN);  // RXpin, TXpin
+typedef DFMiniMp3<SoftwareSerial, Mp3Notify> DfMp3;
+DfMp3 myDFPlayer(softSerial);
+
 
 // ---------------------------- IMU -------------------------------
 MPU9250 mpu;
@@ -33,16 +43,14 @@ unsigned long accMag, gyrMag;
 
 unsigned long swing_timer;
 
-// ---------------------------- PINOUT -------------------------------
-#define MP3_RX_PIN 10
-#define MP3_TX_PIN 11
 
 // ---------------------------- SETTINGS -------------------------------
 #define DEBUG 1
-#define VOLUME 20  // From 0 to 30
+#define VOLUME 30  // From 0 to 30
 
 #define GYR_SWING_THRESHOLD 500
-#define SWING_TIMEOUT_MS 20
+#define SWING_TIMEOUT_MS 70
+
 // ---------------------------- STATES -------------------------------
 #define OFF_STATE 0
 #define IDLE_STATE 1
@@ -69,67 +77,55 @@ public:
 State* curState;
 State* nextState;
 bool resetSaber = false;
-
+bool isIgniteDone = false;
+bool isSwingDone = false;
 // -------------------------------------------------------------------
 
-SoftwareSerial mySoftwareSerial(MP3_RX_PIN, MP3_TX_PIN);
-DFRobotDFPlayerMini myDFPlayer;
-
-//Print the detail message from DFPlayer to handle different errors and states.
-void printDFPlayerDetail(uint8_t type, int value) {
-  switch (type) {
-    case TimeOut:
-      Serial.println(F("Time Out!"));
-      break;
-    case WrongStack:
-      Serial.println(F("Stack Wrong!"));
-      break;
-    case DFPlayerCardInserted:
-      Serial.println(F("Card Inserted!"));
-      break;
-    case DFPlayerCardRemoved:
-      Serial.println(F("Card Removed!"));
-      break;
-    case DFPlayerCardOnline:
-      Serial.println(F("Card Online!"));
-      break;
-    case DFPlayerPlayFinished:
-      Serial.print(F("Number:"));
-      Serial.print(value);
-      Serial.println(F(" Play Finished!"));
-      break;
-    case DFPlayerError:
-      Serial.print(F("DFPlayerError:"));
-      switch (value) {
-        case Busy:
-          Serial.println(F("Card not found"));
-          break;
-        case Sleeping:
-          Serial.println(F("Sleeping"));
-          break;
-        case SerialWrongStack:
-          Serial.println(F("Get Wrong Stack"));
-          break;
-        case CheckSumNotMatch:
-          Serial.println(F("Check Sum Not Match"));
-          break;
-        case FileIndexOut:
-          Serial.println(F("File Index Out of Bound"));
-          break;
-        case FileMismatch:
-          Serial.println(F("Cannot Find File"));
-          break;
-        case Advertise:
-          Serial.println(F("In Advertise"));
-          break;
-        default:
-          break;
-      }
-      break;
-    default:
-      break;
+class Mp3Notify {
+public:
+  static void PrintlnSourceAction(DfMp3_PlaySources source, const char* action) {
+    if (source & DfMp3_PlaySources_Sd) {
+      Serial.print("SD Card, ");
+    }
+    if (source & DfMp3_PlaySources_Usb) {
+      Serial.print("USB Disk, ");
+    }
+    if (source & DfMp3_PlaySources_Flash) {
+      Serial.print("Flash, ");
+    }
+    Serial.println(action);
   }
-}
+  static void OnError([[maybe_unused]] DfMp3& mp3, uint16_t errorCode) {
+    // see DfMp3_Error for code meaning
+    Serial.println();
+    Serial.print("Com Error ");
+    Serial.println(errorCode);
+  }
+  static void OnPlayFinished([[maybe_unused]] DfMp3& mp3, [[maybe_unused]] DfMp3_PlaySources source, uint16_t track) {
+    Serial.print("Play finished for #");
+    Serial.println(track);
+
+    // TODO replace with is audio done
+    isSwingDone = true;
+    switch (track) {
+      case 6:
+        isIgniteDone = true;
+        break;
+      default:
+        break;
+    }
+  }
+  static void OnPlaySourceOnline([[maybe_unused]] DfMp3& mp3, DfMp3_PlaySources source) {
+    PrintlnSourceAction(source, "online");
+  }
+  static void OnPlaySourceInserted([[maybe_unused]] DfMp3& mp3, DfMp3_PlaySources source) {
+    PrintlnSourceAction(source, "inserted");
+  }
+  static void OnPlaySourceRemoved([[maybe_unused]] DfMp3& mp3, DfMp3_PlaySources source) {
+    PrintlnSourceAction(source, "removed");
+  }
+};
+
 
 void getIMU() {
   if (mpu.update()) {
@@ -155,34 +151,58 @@ public:
 
 } clashState;
 
+// https://therebelarmory.com/thread/9138/smoothswing-v2-algorithm-description
 class SwingState : public State {
 public:
   SwingState()
     : State(SWING_STATE) {}
   void init() override {
-    myDFPlayer.disableLoop();
-    myDFPlayer.playFolder(SWING_SOUND_FOLDER, random(1, NUM_SWING_SOUND));
-    myDFPlayer.waitAvailable();
-    resetSaber = true;
+    Serial.println("HERE");
+    myDFPlayer.setRepeatPlayCurrentTrack(false);
+    myDFPlayer.playFolderTrack(SWING_SOUND_FOLDER, random(1, NUM_SWING_SOUND));
+
+  }
+
+  bool checkDir() {
+    if (curDir != prevDir){
+      return true;
+    }
+
+    angle = std::acos(dot(v1,v2)/(mag(v1)*mag(v2))
+    return false;
   }
 
   void run() override {
-    if (checkSwing()) {
+    //  Serial.println("isSwingDone");
+    //Serial.println(isSwingDone);
+    //  Serial.println("heckSwing()");
+   // Serial.println(checkSwing());
+    
+    if (checkSwing() && checkDir()) {
       init();
+    }
+    else if (isSwingDone) {
+      resetSaber = true;
+      isSwingDone = false;
     }
   }
 } swingState;
 
 
 long avgGyrMag = 0;
-
+long last_swing_time = 0;
 bool checkSwing() {
+  if ((millis() - last_swing_time) < SWING_TIMEOUT_MS){
+    return false;
+  }
+
   getIMU();
-  
+
   long gyrMag = sq(gyrX) + sq(gyrY) + sq(gyrZ);
-  avgGyrMag = gyrMag * 0.7 + avgGyrMag * (1 - 0.7); 
-  Serial.println(avgGyrMag);
+  avgGyrMag = gyrMag * 0.7 + avgGyrMag * (1 - 0.7);
+  //Serial.println(avgGyrMag);
   if (gyrMag > GYR_SWING_THRESHOLD) {
+    last_swing_time = millis();
     return true;
   }
 
@@ -190,8 +210,8 @@ bool checkSwing() {
 }
 
 void igniteSaber() {
- // myDFPlayer.playFolder(IGNITE_SOUND_FOLDER, random(1, NUM_IGNITE_SOUND));
-  myDFPlayer.waitAvailable();
+  myDFPlayer.setVolume(0);
+  myDFPlayer.playFolderTrack(IGNITE_SOUND_FOLDER, random(1, NUM_IGNITE_SOUND));
 }
 
 class IdleState : public State {
@@ -199,17 +219,19 @@ public:
   IdleState()
     : State(IDLE_STATE) {}
   void init() override {
-    myDFPlayer.enableLoop();
-    myDFPlayer.playFolder(GENERAL_SOUND_FOLDER, HUM_SOUND);
+      myDFPlayer.setVolume(VOLUME);
+    myDFPlayer.playFolderTrack(GENERAL_SOUND_FOLDER, HUM_SOUND);
+    myDFPlayer.setRepeatPlayCurrentTrack(true);
+
+    resetSaber = false;
   }
 
   void run() override {
+    
     if (checkSwing()) {
+      myDFPlayer.setRepeatPlayCurrentTrack(false);
       nextState = &swingState;
-    }
-
-    if (DEBUG && myDFPlayer.available()) {
-      printDFPlayerDetail(myDFPlayer.readType(), myDFPlayer.read());
+      isSwingDone = false;
     }
   }
 } idleState;
@@ -221,29 +243,23 @@ public:
 
   void init() override {
     // TODO Create a power saving mode when "off"
-    // set_sleep_mode(SLEEP_MODE_IDLE);
-
-    // power_adc_disable();
-    // power_spi_disable();
-    // power_timer0_disable();
-    // power_timer1_disable();
-    // power_timer2_disable();
-    // power_twi_disable();
-
-    // sleep_enable();
-    // sleep_mode();
-    myDFPlayer.disableLoop();
     igniteSaber();
-    nextState = &idleState;
+  }
+
+  void run() override {
+    if (isIgniteDone) {
+      nextState = &idleState;
+    }
   }
 } offState;
 
 void loop() {
   if (resetSaber) {
     nextState = &idleState;
-    resetSaber = false;
-  }  
-  
+  }
+
+  myDFPlayer.loop();
+
   if (curState->getID() != nextState->getID()) {
     Serial.print(F("Changing from state "));
     Serial.print((int)curState->getID());
@@ -272,21 +288,17 @@ void setupIMU() {
 void setupAudio() {
   Serial.println(F("Initializing DFPlayer ... (May take 3~5 seconds)"));
 
-  if (!myDFPlayer.begin(mySoftwareSerial, true, false)) {
-    Serial.println(F("Unable to begin:"));
-    Serial.println(F("1.Please recheck the connection!"));
-    Serial.println(F("2.Please insert the SD card!"));
-    while (true)
-      ;
-  }
+  myDFPlayer.begin();
 
-  myDFPlayer.volume(VOLUME);
+  myDFPlayer.setVolume(VOLUME);
   Serial.println(F("DFPlayer Mini online."));
 }
 
 void setup() {
-  mySoftwareSerial.begin(9600);
   Serial.begin(115200);
+  while (!Serial) {
+    ;  // wait for serial port to connect. Needed for native USB
+  }
 
   setupAudio();
   setupIMU();
