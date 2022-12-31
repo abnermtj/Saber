@@ -13,6 +13,7 @@ void setup(void) {
 
 void loop(void) {
   if (mpu.update()) {
+    
     String url = "accX:";
     url.concat(mpu.getAccX());
     url.concat(", accY:");

@@ -5,6 +5,8 @@
 
 #define PIN 6
 
+//lead with white tip then at the top become fully red
+
 // Parameter 1 = number of pixels in strip
 // Parameter 2 = Arduino pin number (most are valid)
 // Parameter 3 = pixel type flags, add together as needed:
@@ -21,6 +23,7 @@ Adafruit_NeoPixel strip = Adafruit_NeoPixel(144, PIN, NEO_GRB + NEO_KHZ800);
 // on a live circuit...if you must, connect GND first.
 
 void setup() {
+  Serial.begin(9600);
   // This is for Trinket 5V 16MHz, you can remove these three lines if you are not using a Trinket
   #if defined (__AVR_ATtiny85__)
     if (F_CPU == 16000000) clock_prescale_set(clock_div_1);
@@ -28,27 +31,28 @@ void setup() {
   // End of trinket special code
 
   strip.begin();
-  strip.setBrightness(50);
+  strip.setBrightness(150);
   strip.show(); // Initialize all pixels to 'off'
 }
 
 void loop() {
   // Some example procedures showing how to display to the pixels:
-  colorWipe(strip.Color(255, 0, 0), 3); // Red
-   colorWipe(strip.Color(0, 255, 0), 3); // Green
-  colorWipe(strip.Color(0, 0, 255), 3); // Blue
+  Ignition(strip.Color(255, 0, 0), 3,strip.Color(255,255,255),0,50); // Red
+  breathe(255,100, 0.5,0.5,strip.Color(255,255,255),strip.Color(255,0,0));//Fade stuff #Maximum bightness is 255-50 so it adds up to 255
+  //colorWipe(strip.Color(0, 255, 0), 3); // Green
+  //colorWipe(strip.Color(0, 0, 255), 3); // Blue
 // //colorWipe(strip.Color(0, 0, 0, 255), 50); // White RGBW
 //   // Send a theater pixel chase in...
 //   theaterChase(strip.Color(127, 127, 127), 50); // White
 //   theaterChase(strip.Color(127, 0, 0), 50); // Red
 //   theaterChase(strip.Color(0, 0, 127), 50); // Blue
 
-   rainbow(20);
-//   rainbowCycle(20);
+  // rainbow(20);
+   //rainbowCycle(20);
 //   theaterChaseRainbow(50);
 }
 
-// Fill the dots one after the other with a color
+// Fill the dots one after the other with a color #Change this
 void colorWipe(uint32_t c, uint8_t wait) {
   for(uint16_t i=0; i<strip.numPixels(); i++) {
     strip.setPixelColor(i, c);
@@ -56,6 +60,67 @@ void colorWipe(uint32_t c, uint8_t wait) {
     delay(wait);
   }
 }
+
+void breathe(float MaximumBrightness,float MinimumBrightness, float SpeedFactor, float StepDelay,uint32_t tipcolor, uint32_t color)
+{
+  // Make the lights breathe
+  for (int i = 0; i < 6000; i++) {
+    // Intensity will go from 10 - MaximumBrightness in a "breathing" manner
+    float intensity = MaximumBrightness /2.0 * (1.0 + sin(SpeedFactor * i)) + MinimumBrightness;
+    intensity = constrain(intensity,0,255);
+    strip.setBrightness(intensity);
+    // Now set every LED to that color
+    for (int ledNumber=0; ledNumber<=144; ledNumber++) {
+      strip.setPixelColor(ledNumber, color); //Color we wanna set
+        if (ledNumber >= 139){
+          strip.setPixelColor(ledNumber,tipcolor);
+          strip.show();
+        }
+    }
+
+    strip.show();
+    //Wait a bit before continuing to breathe
+    delay(StepDelay);
+  }
+}
+
+
+
+//transition type how fast it lits
+void Ignition(uint32_t color, uint8_t duration, uint32_t tipcolor, uint8_t transitiontype,uint32_t transitionduration) {    
+  for(uint16_t pixelposition=0; pixelposition<strip.numPixels(); pixelposition++) {
+    if (transitiontype == 0){
+      strip.setPixelColor(pixelposition, color);
+        if (pixelposition >= 139){
+          strip.setPixelColor(pixelposition,tipcolor);
+          strip.show();
+        }
+      
+      strip.show();
+      delay(duration);
+      
+    }
+    else if (transitiontype == 1){
+      strip.setPixelColor(pixelposition, color);
+          if (pixelposition >= 139){ //138 is the led shit
+          strip.setPixelColor(pixelposition,tipcolor);
+          strip.show();
+        }
+      strip.show();
+      delay(transitionduration);
+    }
+    
+
+  }  
+}
+
+
+
+
+
+
+
+
 
 void rainbow(uint8_t wait) {
   uint16_t i, j;

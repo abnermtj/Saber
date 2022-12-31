@@ -306,7 +306,7 @@ public:
     // 0- 30
     void setVolume(uint8_t volume)
     {
-        sendPacket(0x06, volume, 100);
+        sendPacket(0x06, volume, 50); // originall 100
     }
 
     uint8_t getVolume()
@@ -494,7 +494,7 @@ public:
     }
 
 private:
-    static const uint16_t c_msSendSpace = 50;
+    static const uint16_t c_msSendSpace = 20; // Orignally 50
 
     T_SERIAL_METHOD &_serial;
     uint32_t _lastSend; // not initialized as agreed in issue #63
@@ -508,11 +508,11 @@ private:
             listenForReply(0x00);
         }
     }
-
+  
+    // TODO speed up this command
     void sendPacket(uint8_t command, uint16_t arg = 0, uint16_t sendSpaceNeeded = c_msSendSpace)
     {
         typename T_CHIP_VARIANT::SendPacket packet = T_CHIP_VARIANT::generatePacket(command, arg);
-
         // wait for spacing since last send
         while (((millis() - _lastSend) < _lastSendSpace))
         {

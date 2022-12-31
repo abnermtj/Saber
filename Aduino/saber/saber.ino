@@ -3,6 +3,10 @@
 #include "DFMiniMp3.h"
 #include "MPU9250.h"
 #include "NonBlockingDelay.h"
+#include <Adafruit_NeoPixel.h>
+#ifdef __AVR__
+#include <avr/power.h>
+#endif
 
 // ---------------------------- PINOUT -------------------------------
 #define MP3_RX_PIN 10
@@ -39,18 +43,22 @@ MPU9250 mpu;
 
 float accX, accY, accZ;
 float gyrX, gyrY, gyrZ;
-unsigned long accMag, gyrMag;
 
 unsigned long swing_timer;
+long last_swing_time = 0;
 
 
 // ---------------------------- SETTINGS -------------------------------
 #define DEBUG 1
-#define VOLUME 12  // From 0 to 30
-
-#define GYR_SWING_THRESHOLD 5000
-#define SWING_TIMEOUT_MS 700
-
+#define VOLUME 24  // From 0 to 30
+#define MIN_SWING_VOLUME 10
+#define MAX_SWING_VOLUME 30
+#define NUM_PIXELS 144
+#define GYR_SWING_THRESHOLD 20000
+#define GYR_RESWING_THRESHOLD 10000
+#define GYR_SLOW_SWING_THRESHOLD 100000
+#define SWING_TIMEOUT_MS 500
+#define RESWING_TIMEOUT_MS 400
 // ---------------------------- STATES -------------------------------
 #define START_STATE 0
 #define OFF_STATE 1
@@ -58,6 +66,7 @@ unsigned long swing_timer;
 #define SWING_STATE 3
 #define CLASH_STATE 4
 
+#define SWING_STATE_TIME_MS 800
 
 class State {
 private:
@@ -110,7 +119,7 @@ public:
 
     // Ignore duplicate audio done messages
     if (track != prevTrack) {
-    isSoundDone = true;
+      isSoundDone = true;
     }
 
     prevTrack = track;
@@ -126,7 +135,8 @@ public:
   }
 };
 
-
+long curGyrMag, maxGyrMag, avgGyrMag = 0;
+long maxGyrTimeStamp = 0;
 void getIMU() {
   if (mpu.update()) {
     accX = mpu.getAccX();
@@ -135,6 +145,18 @@ void getIMU() {
     gyrX = mpu.getGyroX();
     gyrY = mpu.getGyroY();
     gyrZ = mpu.getGyroZ();
+
+    curGyrMag = sq(gyrX) + sq(gyrY) + sq(gyrZ);
+    avgGyrMag = curGyrMag * 0.7 + avgGyrMag * (1 - 0.7);
+
+    if (millis() - maxGyrTimeStamp > 30) {
+      maxGyrMag = 0;
+    }
+
+    if (curGyrMag > maxGyrMag) {
+      maxGyrMag = curGyrMag;
+      maxGyrTimeStamp = millis();
+    }
   }
 }
 class ClashState : public State {
@@ -151,46 +173,106 @@ public:
 
 } clashState;
 
+static inline int8_t sign(int val) {
+  if (val < 0) return -1;
+  if (val == 0) return 0;
+  return 1;
+}
+
+
 // TODO https://therebelarmory.com/thread/9138/smoothswing-v2-algorithm-description
 class SwingState : public State {
 public:
+  int swingCountDown = 5;
+  long swingStateTime = 0;
+  int initialSwingDirX, initialSwingDirY, initialSwingDirZ;
+
   SwingState()
     : State(SWING_STATE) {}
-  void init() override {
-    Serial.println("SWING");
-    //myDFPlayer.setRepeatPlayCurrentTrack(false);
-     myDFPlayer.playAdvertisement(13);
-    //myDFPlayer.playFolderTrack(SWING_SOUND_FOLDER, random(1, NUM_SWING_SOUND));
-  }
 
   //TODO
   bool checkDir() {
-    // if (curDir != prevDir){
-    //   return true;
-    // }
+    int diff = 0;
+    if (sign(gyrX) != initialSwingDirX) {
+      diff++;
+    }
+    if (sign(gyrY) != initialSwingDirY) {
+      diff++;
+    }
+    if (sign(gyrZ) != initialSwingDirZ) {
+      diff++;
+    }
+    Serial.print("Number of axis reversed:");
+    Serial.println(diff);
 
-    // angle = std::acos(dot(v1,v2)/(mag(v1)*mag(v2))
+    if (diff >= 2) {
+      return true;
+    }
+
     return false;
   }
 
-  void run() override {
-    // Serial.println("isSwingDone");
-    // Serial.println(isSwingDone);
-    // Serial.println("heckSwing()");
-    // Serial.println(checkSwing());
-    resetSaber = true;
-    if (checkSwing() && checkDir()) {
-      init();
-    } else if (isSoundDone) {
+  bool checkReSwing() {
+    if ((millis() - last_swing_time) < RESWING_TIMEOUT_MS) {
+      return false;
+    }
+
+    getIMU();
+
+    if (curGyrMag > GYR_RESWING_THRESHOLD) {
+      last_swing_time = millis();
+      return true;
+    }
+
+    return false;
+  }
+
+  void init() override {
+    Serial.println("SWING");
+    // myDFPlayer.setRepeatPlayCurrentTrack(false);
+    for (int i = 0; i < swingCountDown; i++) {
+      getIMU();  // 3 ms each loop!
+    }
+
+    if (maxGyrMag > GYR_SLOW_SWING_THRESHOLD) {
+      Serial.println("SLOW SWING");
+      myDFPlayer.playAdvertisement(random(1, NUM_SWING_SOUND));
+    } else {
+      Serial.println("FAST SWING");
+      myDFPlayer.playAdvertisement(random(1000, 1001));
+    }
+
+    initialSwingDirX = sign(gyrX);
+    initialSwingDirY = sign(gyrY);
+    initialSwingDirZ = sign(gyrZ);
+    swingStateTime = millis();
+  }
+  void run() override {  // TODO PROFILE THIS !
+    if ((millis() - swingStateTime) > SWING_STATE_TIME_MS) {
+      Serial.println("RESET");
       resetSaber = true;
       isSoundDone = false;
+      myDFPlayer.setVolume(VOLUME);
+      return;
     }
+
+    // Check is reswing in different direction
+    if (checkReSwing() && checkDir()) {
+      Serial.println("RESWING");
+      init();
+    }
+    // Adjust volume to saber swing speed
+    int adjusted_volume = (avgGyrMag / 2000) + MIN_SWING_VOLUME;
+    adjusted_volume = constrain(adjusted_volume, MIN_SWING_VOLUME, MAX_SWING_VOLUME);
+    myDFPlayer.setVolume(adjusted_volume);
+    Serial.print("avgGyrMag: ");
+    Serial.print(avgGyrMag);
+    Serial.print("adjusted_volume:");
+    Serial.println(adjusted_volume);
   }
+
 } swingState;
 
-
-long avgGyrMag = 0;
-long last_swing_time = 0;
 bool checkSwing() {
   if ((millis() - last_swing_time) < SWING_TIMEOUT_MS) {
     return false;
@@ -198,10 +280,7 @@ bool checkSwing() {
 
   getIMU();
 
-  long gyrMag = sq(gyrX) + sq(gyrY) + sq(gyrZ);
-  avgGyrMag = gyrMag * 0.7 + avgGyrMag * (1 - 0.7);
-  // Serial.println(gyrMag);
-  if (gyrMag > GYR_SWING_THRESHOLD) {
+  if (curGyrMag > GYR_SWING_THRESHOLD) {
     last_swing_time = millis();
     return true;
   }
@@ -215,27 +294,27 @@ public:
   IdleState()
     : State(IDLE_STATE) {}
   void init() override {
-      Serial.println("IDLE");
+    resetSaber = false;
+
+    Serial.println("IDLE");
     myDFPlayer.setVolume(VOLUME);  // DEBUG
     myDFPlayer.playFolderTrack(GENERAL_SOUND_FOLDER, HUM_SOUND);
-    //  myDFPlayer.playFolderTrack(SWING_SOUND_FOLDER, random(1, NUM_SWING_SOUND));
     myDFPlayer.setRepeatPlayCurrentTrack(true);
-
-    resetSaber = false;
   }
 
   void run() override {
 
+
     if (checkSwing()) {
-      myDFPlayer.playAdvertisement(13);
-      // nextState = &swingState;
+      nextState = &swingState;
       isSoundDone = false;
     }
   }
 } idleState;
 
 void igniteSaber() {
-  myDFPlayer.setVolume(0);  // DEBUG
+  // myDFPlayer.setVolume(0);  // DEBUG
+  myDFPlayer.setRepeatPlayCurrentTrack(false);
   myDFPlayer.playFolderTrack(IGNITE_SOUND_FOLDER, random(1, NUM_IGNITE_SOUND));
 }
 
@@ -245,7 +324,7 @@ public:
     : State(OFF_STATE) {}
 
   void init() override {
-    // TODO Create a power saving mode when "off" 
+    // TODO Create a power saving mode when "off"
     // TODO ignite only if button pressed
     Serial.println("OFF");
     igniteSaber();
@@ -273,17 +352,15 @@ public:
 } startState;
 
 void loop() {
+
   if (resetSaber) {
     nextState = &idleState;
   }
-
-  
-
   if (curState->getID() != nextState->getID()) {
-    Serial.print(F("Changing from state "));
-    Serial.print((int)curState->getID());
-    Serial.print(F(" to state "));
-    Serial.println((int)nextState->getID());
+    // Serial.print(F("Changing from state "));
+    // Serial.print((int)curState->getID());
+    // Serial.print(F(" to state "));
+    // Serial.println((int)nextState->getID());
 
     curState = nextState;
     curState->init();
@@ -298,6 +375,15 @@ void setupStates() {
   nextState = &offState;
 }
 
+void setupLED() {
+  return 0;  // tODO implement and uncomment
+
+  // for (int i = NUM_PIXELS; i > -1; i--)
+  // {
+  //   pixels.setPixelColor(i, pixels.Color(0, 0, 0));
+  //   pixels.show();
+  // }
+}
 void setupIMU() {
   Wire.begin();
   delay(1500);        // Wait for mpu to initialize
@@ -323,5 +409,6 @@ void setup() {
 
   setupAudio();
   setupIMU();
+  setupLED();
   setupStates();
 }
