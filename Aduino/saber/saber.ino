@@ -1,6 +1,6 @@
 #include "Arduino.h"
 #include "SoftwareSerial.h"
-#include <DFMiniMp3.h>
+#include "DFMiniMp3.h"
 #include "MPU9250.h"
 #include "NonBlockingDelay.h"
 
@@ -46,16 +46,18 @@ unsigned long swing_timer;
 
 // ---------------------------- SETTINGS -------------------------------
 #define DEBUG 1
-#define VOLUME 30  // From 0 to 30
+#define VOLUME 12  // From 0 to 30
 
-#define GYR_SWING_THRESHOLD 500
-#define SWING_TIMEOUT_MS 70
+#define GYR_SWING_THRESHOLD 5000
+#define SWING_TIMEOUT_MS 700
 
 // ---------------------------- STATES -------------------------------
-#define OFF_STATE 0
-#define IDLE_STATE 1
-#define SWING_STATE 2
-#define CLASH_STATE 3
+#define START_STATE 0
+#define OFF_STATE 1
+#define IDLE_STATE 2
+#define SWING_STATE 3
+#define CLASH_STATE 4
+
 
 class State {
 private:
@@ -77,8 +79,8 @@ public:
 State* curState;
 State* nextState;
 bool resetSaber = false;
-bool isIgniteDone = false;
-bool isSwingDone = false;
+bool isSoundDone = false;
+int prevTrack = -1;
 // -------------------------------------------------------------------
 
 class Mp3Notify {
@@ -101,19 +103,17 @@ public:
     Serial.print("Com Error ");
     Serial.println(errorCode);
   }
+
   static void OnPlayFinished([[maybe_unused]] DfMp3& mp3, [[maybe_unused]] DfMp3_PlaySources source, uint16_t track) {
     Serial.print("Play finished for #");
     Serial.println(track);
 
-    // TODO replace with is audio done
-    isSwingDone = true;
-    switch (track) {
-      case 6:
-        isIgniteDone = true;
-        break;
-      default:
-        break;
+    // Ignore duplicate audio done messages
+    if (track != prevTrack) {
+    isSoundDone = true;
     }
+
+    prevTrack = track;
   }
   static void OnPlaySourceOnline([[maybe_unused]] DfMp3& mp3, DfMp3_PlaySources source) {
     PrintlnSourceAction(source, "online");
@@ -151,39 +151,39 @@ public:
 
 } clashState;
 
-// https://therebelarmory.com/thread/9138/smoothswing-v2-algorithm-description
+// TODO https://therebelarmory.com/thread/9138/smoothswing-v2-algorithm-description
 class SwingState : public State {
 public:
   SwingState()
     : State(SWING_STATE) {}
   void init() override {
-    Serial.println("HERE");
-    myDFPlayer.setRepeatPlayCurrentTrack(false);
-    myDFPlayer.playFolderTrack(SWING_SOUND_FOLDER, random(1, NUM_SWING_SOUND));
-
+    Serial.println("SWING");
+    //myDFPlayer.setRepeatPlayCurrentTrack(false);
+     myDFPlayer.playAdvertisement(13);
+    //myDFPlayer.playFolderTrack(SWING_SOUND_FOLDER, random(1, NUM_SWING_SOUND));
   }
 
+  //TODO
   bool checkDir() {
-    if (curDir != prevDir){
-      return true;
-    }
+    // if (curDir != prevDir){
+    //   return true;
+    // }
 
-    angle = std::acos(dot(v1,v2)/(mag(v1)*mag(v2))
+    // angle = std::acos(dot(v1,v2)/(mag(v1)*mag(v2))
     return false;
   }
 
   void run() override {
-    //  Serial.println("isSwingDone");
-    //Serial.println(isSwingDone);
-    //  Serial.println("heckSwing()");
-   // Serial.println(checkSwing());
-    
+    // Serial.println("isSwingDone");
+    // Serial.println(isSwingDone);
+    // Serial.println("heckSwing()");
+    // Serial.println(checkSwing());
+    resetSaber = true;
     if (checkSwing() && checkDir()) {
       init();
-    }
-    else if (isSwingDone) {
+    } else if (isSoundDone) {
       resetSaber = true;
-      isSwingDone = false;
+      isSoundDone = false;
     }
   }
 } swingState;
@@ -192,7 +192,7 @@ public:
 long avgGyrMag = 0;
 long last_swing_time = 0;
 bool checkSwing() {
-  if ((millis() - last_swing_time) < SWING_TIMEOUT_MS){
+  if ((millis() - last_swing_time) < SWING_TIMEOUT_MS) {
     return false;
   }
 
@@ -200,7 +200,7 @@ bool checkSwing() {
 
   long gyrMag = sq(gyrX) + sq(gyrY) + sq(gyrZ);
   avgGyrMag = gyrMag * 0.7 + avgGyrMag * (1 - 0.7);
-  //Serial.println(avgGyrMag);
+  // Serial.println(gyrMag);
   if (gyrMag > GYR_SWING_THRESHOLD) {
     last_swing_time = millis();
     return true;
@@ -209,32 +209,35 @@ bool checkSwing() {
   return false;
 }
 
-void igniteSaber() {
-  myDFPlayer.setVolume(0);
-  myDFPlayer.playFolderTrack(IGNITE_SOUND_FOLDER, random(1, NUM_IGNITE_SOUND));
-}
 
 class IdleState : public State {
 public:
   IdleState()
     : State(IDLE_STATE) {}
   void init() override {
-      myDFPlayer.setVolume(VOLUME);
+      Serial.println("IDLE");
+    myDFPlayer.setVolume(VOLUME);  // DEBUG
     myDFPlayer.playFolderTrack(GENERAL_SOUND_FOLDER, HUM_SOUND);
+    //  myDFPlayer.playFolderTrack(SWING_SOUND_FOLDER, random(1, NUM_SWING_SOUND));
     myDFPlayer.setRepeatPlayCurrentTrack(true);
 
     resetSaber = false;
   }
 
   void run() override {
-    
+
     if (checkSwing()) {
-      myDFPlayer.setRepeatPlayCurrentTrack(false);
-      nextState = &swingState;
-      isSwingDone = false;
+      myDFPlayer.playAdvertisement(13);
+      // nextState = &swingState;
+      isSoundDone = false;
     }
   }
 } idleState;
+
+void igniteSaber() {
+  myDFPlayer.setVolume(0);  // DEBUG
+  myDFPlayer.playFolderTrack(IGNITE_SOUND_FOLDER, random(1, NUM_IGNITE_SOUND));
+}
 
 class OffState : public State {
 public:
@@ -242,23 +245,39 @@ public:
     : State(OFF_STATE) {}
 
   void init() override {
-    // TODO Create a power saving mode when "off"
+    // TODO Create a power saving mode when "off" 
+    // TODO ignite only if button pressed
+    Serial.println("OFF");
     igniteSaber();
   }
 
   void run() override {
-    if (isIgniteDone) {
+    if (isSoundDone) {
       nextState = &idleState;
+      isSoundDone = false;
     }
   }
 } offState;
+
+class StartState : public State {
+public:
+  StartState()
+    : State(START_STATE) {}
+
+  void init() override {
+    Serial.println("START");
+  }
+
+  void run() override {
+  }
+} startState;
 
 void loop() {
   if (resetSaber) {
     nextState = &idleState;
   }
 
-  myDFPlayer.loop();
+  
 
   if (curState->getID() != nextState->getID()) {
     Serial.print(F("Changing from state "));
@@ -270,31 +289,33 @@ void loop() {
     curState->init();
   }
 
+  myDFPlayer.loop();
   curState->run();
 }
 
 void setupStates() {
-  curState = &idleState;
+  curState = &startState;
   nextState = &offState;
 }
 
 void setupIMU() {
   Wire.begin();
-  delay(2000);        // Wait for mpu to initialize
+  delay(1500);        // Wait for mpu to initialize
   mpu.verbose(true);  // For debug
   mpu.setup(0x68);    // Set to i2c address of mpu
+
+  Serial.println(F("IMU online."));
 }
 
 void setupAudio() {
-  Serial.println(F("Initializing DFPlayer ... (May take 3~5 seconds)"));
-
   myDFPlayer.begin();
-
   myDFPlayer.setVolume(VOLUME);
+
   Serial.println(F("DFPlayer Mini online."));
 }
 
 void setup() {
+  randomSeed(analogRead(0));
   Serial.begin(115200);
   while (!Serial) {
     ;  // wait for serial port to connect. Needed for native USB
