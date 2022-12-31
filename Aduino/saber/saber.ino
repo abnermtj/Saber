@@ -37,7 +37,8 @@ SoftwareSerial softSerial(MP3_RX_PIN, MP3_TX_PIN);  // RXpin, TXpin
 typedef DFMiniMp3<SoftwareSerial, Mp3Notify> DfMp3;
 DfMp3 myDFPlayer(softSerial);
 
-
+float curVolume = 0;
+float goalVolume = 0;
 // ---------------------------- IMU -------------------------------
 MPU9250 mpu;
 
@@ -51,14 +52,15 @@ long last_swing_time = 0;
 // ---------------------------- SETTINGS -------------------------------
 #define DEBUG 1
 #define VOLUME 24  // From 0 to 30
-#define MIN_SWING_VOLUME 10
+#define MIN_SWING_VOLUME 5
 #define MAX_SWING_VOLUME 30
 #define NUM_PIXELS 144
-#define GYR_SWING_THRESHOLD 20000
+#define GYR_SWING_THRESHOLD 4000
 #define GYR_RESWING_THRESHOLD 10000
-#define GYR_SLOW_SWING_THRESHOLD 100000
+#define GYR_SLOW_SWING_THRESHOLD 9000
 #define SWING_TIMEOUT_MS 500
 #define RESWING_TIMEOUT_MS 400
+#define VOLUME_LERP 0.04 
 // ---------------------------- STATES -------------------------------
 #define START_STATE 0
 #define OFF_STATE 1
@@ -144,7 +146,8 @@ void getIMU() {
     accZ = mpu.getAccZ();
     gyrX = mpu.getGyroX();
     gyrY = mpu.getGyroY();
-    gyrZ = mpu.getGyroZ();
+    // gyrZ = mpu.getGyroZ();
+    gyrZ = 0;
 
     curGyrMag = sq(gyrX) + sq(gyrY) + sq(gyrZ);
     avgGyrMag = curGyrMag * 0.7 + avgGyrMag * (1 - 0.7);
@@ -183,7 +186,7 @@ static inline int8_t sign(int val) {
 // TODO https://therebelarmory.com/thread/9138/smoothswing-v2-algorithm-description
 class SwingState : public State {
 public:
-  int swingCountDown = 5;
+  int swingCountDown = 8;
   long swingStateTime = 0;
   int initialSwingDirX, initialSwingDirY, initialSwingDirZ;
 
@@ -199,13 +202,13 @@ public:
     if (sign(gyrY) != initialSwingDirY) {
       diff++;
     }
-    if (sign(gyrZ) != initialSwingDirZ) {
-      diff++;
-    }
-    Serial.print("Number of axis reversed:");
-    Serial.println(diff);
+    // if (sign(gyrZ) != initialSwingDirZ) {
+    //   diff++;
+    // }
+    // Serial.print("Number of axis reversed:");
+    // Serial.println(diff);
 
-    if (diff >= 2) {
+    if (diff >= 1) {
       return true;
     }
 
@@ -233,13 +236,13 @@ public:
     for (int i = 0; i < swingCountDown; i++) {
       getIMU();  // 3 ms each loop!
     }
-
-    if (maxGyrMag > GYR_SLOW_SWING_THRESHOLD) {
-      Serial.println("SLOW SWING");
-      myDFPlayer.playAdvertisement(random(1, NUM_SWING_SOUND));
+    Serial.println(maxGyrMag);
+    if (maxGyrMag < GYR_SLOW_SWING_THRESHOLD) {
+      // Serial.println("SLOW SWING");
+      myDFPlayer.playAdvertisement(random(1, NUM_SWING_SOUND+1));
     } else {
-      Serial.println("FAST SWING");
-      myDFPlayer.playAdvertisement(random(1000, 1001));
+      // Serial.println("FAST SWING");
+      myDFPlayer.playAdvertisement(random(1000, 1002));
     }
 
     initialSwingDirX = sign(gyrX);
@@ -247,14 +250,7 @@ public:
     initialSwingDirZ = sign(gyrZ);
     swingStateTime = millis();
   }
-  void run() override {  // TODO PROFILE THIS !
-    if ((millis() - swingStateTime) > SWING_STATE_TIME_MS) {
-      Serial.println("RESET");
-      resetSaber = true;
-      isSoundDone = false;
-      myDFPlayer.setVolume(VOLUME);
-      return;
-    }
+  void run() override {  
 
     // Check is reswing in different direction
     if (checkReSwing() && checkDir()) {
@@ -262,13 +258,23 @@ public:
       init();
     }
     // Adjust volume to saber swing speed
-    int adjusted_volume = (avgGyrMag / 2000) + MIN_SWING_VOLUME;
+    int adjusted_volume = (avgGyrMag / 200) + MIN_SWING_VOLUME;
     adjusted_volume = constrain(adjusted_volume, MIN_SWING_VOLUME, MAX_SWING_VOLUME);
-    myDFPlayer.setVolume(adjusted_volume);
-    Serial.print("avgGyrMag: ");
-    Serial.print(avgGyrMag);
-    Serial.print("adjusted_volume:");
-    Serial.println(adjusted_volume);
+
+    // Serial.print("avgGyrMag: ");
+    // Serial.print(avgGyrMag);
+    // Serial.print(" adjusted_volume:");
+    // Serial.println(adjusted_volume);
+    if (((millis() - swingStateTime) > SWING_STATE_TIME_MS)
+        || (adjusted_volume == MIN_SWING_VOLUME)) {
+      Serial.println("RESET");
+      resetSaber = true;
+      isSoundDone = false;
+      goalVolume = VOLUME;
+      return;
+    } else {
+       goalVolume = adjusted_volume;
+    }
   }
 
 } swingState;
@@ -297,7 +303,7 @@ public:
     resetSaber = false;
 
     Serial.println("IDLE");
-    myDFPlayer.setVolume(VOLUME);  // DEBUG
+    goalVolume = VOLUME;
     myDFPlayer.playFolderTrack(GENERAL_SOUND_FOLDER, HUM_SOUND);
     myDFPlayer.setRepeatPlayCurrentTrack(true);
   }
@@ -313,9 +319,11 @@ public:
 } idleState;
 
 void igniteSaber() {
-  // myDFPlayer.setVolume(0);  // DEBUG
+  myDFPlayer.setVolume(0);  // DEBUG
+  curVolume = 0; // DEBUG
+  goalVolume = 0; // DEBUG
   myDFPlayer.setRepeatPlayCurrentTrack(false);
-  myDFPlayer.playFolderTrack(IGNITE_SOUND_FOLDER, random(1, NUM_IGNITE_SOUND));
+  myDFPlayer.playFolderTrack(IGNITE_SOUND_FOLDER, random(1, NUM_IGNITE_SOUND+1));
 }
 
 class OffState : public State {
@@ -351,8 +359,23 @@ public:
   }
 } startState;
 
-void loop() {
 
+void updateVolume() {
+  if (abs(curVolume - goalVolume) > 0.4) {
+    if (curVolume < goalVolume) {
+    curVolume = goalVolume * VOLUME_LERP + curVolume * (1 - VOLUME_LERP); 
+     }
+    else {
+       curVolume = goalVolume * VOLUME_LERP * 2 + curVolume * (1 - VOLUME_LERP*2); 
+    }
+    myDFPlayer.setVolume((int)curVolume);
+  }
+
+//  delay(30); // TODO find out  if this line  needed 
+   Serial.println(curVolume);
+}
+
+void loop() {
   if (resetSaber) {
     nextState = &idleState;
   }
@@ -366,6 +389,7 @@ void loop() {
     curState->init();
   }
 
+  updateVolume();
   myDFPlayer.loop();
   curState->run();
 }
@@ -396,6 +420,8 @@ void setupIMU() {
 void setupAudio() {
   myDFPlayer.begin();
   myDFPlayer.setVolume(VOLUME);
+  curVolume = VOLUME;
+  goalVolume = VOLUME;
 
   Serial.println(F("DFPlayer Mini online."));
 }

@@ -211,7 +211,7 @@ public:
     void begin(unsigned long baud = 9600)
     {
         _serial.begin(baud);
-        _serial.setTimeout(10000);
+        _serial.setTimeout(100);
         _lastSend = millis();
     }
 
@@ -514,13 +514,13 @@ private:
     {
         typename T_CHIP_VARIANT::SendPacket packet = T_CHIP_VARIANT::generatePacket(command, arg);
         // wait for spacing since last send
-        while (((millis() - _lastSend) < _lastSendSpace))
-        {
-            // check for event messages from the device while
-            // we wait
-            loop();
-            delay(1);
-        }
+        // while (((millis() - _lastSend) < _lastSendSpace))
+        // {
+        //     // check for event messages from the device while
+        //     // we wait
+        //     loop();
+        //     delay(1);
+        // }
 
         _lastSendSpace = sendSpaceNeeded;
         _serial.write(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
