@@ -173,12 +173,12 @@ inline void motionEngine() {
     curDeltAccel.x = prevAccel.x - curAccel.x;
     curDeltAccel.y = prevAccel.y - curAccel.y;
     curDeltAccel.z = prevAccel.z - curAccel.z;
-
+Serial.println(curDeltAccel.x);
     //We calculate the rotation quaternion since last orientation
     prevRotation = curRotation;
     curRotation = prevOrientation.getProduct(
       curOrientation.getNormalized());
     // display quaternion values in easy matrix form: w x y z
-    printQuaternion(curRotation);
+    // printQuaternion(curRotation);
   }
 }
