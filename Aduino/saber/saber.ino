@@ -8,13 +8,6 @@
 #include <avr/power.h>
 #endif
 
-// ---------------------------- DEBUG -------------------------------
-//  #define LS_LOOPLENGHT
-#ifdef LS_LOOPLENGHT
-unsigned long loopcurrenttime;
-#endif
-
-
 // ---------------------------- PINOUT -------------------------------
 #define MP3_RX_PIN 10
 #define MP3_TX_PIN 11
@@ -48,14 +41,15 @@ DfMp3 myDFPlayer(softSerial);
 float curVolume = 0;
 uint8_t prevVolume = 0;
 float goalVolume = 0;
+uint16_t prevTrack = -1;
 
 // ---------------------------- IMU -------------------------------
 MPU6050 mpu;
 
-Quaternion curRotation;             // [w, x, y, z]         estimated of rotational forces
-Quaternion prevRotation;            // [w, x, y, z]
-static Quaternion prevOrientation;  // [w, x, y, z]         hold an estimate of the angle in space
-static Quaternion curOrientation;   // [w, x, y, z]
+Quaternion curRotation;  // estimated rotational forces
+Quaternion prevRotation;
+static Quaternion prevOrientation;  // estimate of the angle in space
+static Quaternion curOrientation;
 VectorInt16 curAccel;
 VectorInt16 prevAccel;
 VectorInt16 curDeltAccel;
@@ -64,7 +58,6 @@ VectorInt16 curGyro;
 long curGyrMag, maxGyrMag, avgGyrMag = 0;
 long maxGyrTimeStamp = 0;
 
-unsigned long swing_timer;
 long last_swing_time = 0;
 
 volatile bool mpuInterruptDetected = false;
@@ -77,19 +70,19 @@ bool dmpReady = false;
 I2Cdev i2ccomm;
 
 // ---------------------------- SETTINGS -------------------------------
-#define DEBUG 1
+// #define DEBUG 1
 #define VOLUME 24  // From 0 to 30
-#define MIN_SWING_VOLUME 20
-#define MAX_SWING_VOLUME 30
+#define MIN_SWING_VOLUME 18
+#define MAX_SWING_VOLUME 29
 #define NUM_PIXELS 144
 #define ACC_SWING_THRESHOLD 1000
 #define GYR_SLOW_SWING_THRESHOLD 9000
 #define SWING_TIMEOUT_MS 500
-#define RESWING_TIMEOUT_MS 300
+#define RESWING_TIMEOUT_MS 250
 #define VOLUME_LERP 0.043
 #define CLASH_THRESHOLD 10
 
-// ---------------------------- STATES -------------------------------
+// ---------------------------- FSM STATES -------------------------------
 #define START_STATE 0
 #define OFF_STATE 1
 #define IDLE_STATE 2
@@ -118,9 +111,14 @@ public:
 State* curState;
 State* nextState;
 bool resetSaber = false;
-bool isSoundDone = false;
-int prevTrack = -1;
-// -------------------------------------------------------------------
+volatile bool isSoundDone = false;
+
+
+// ---------------------------- DEBUG -------------------------------
+#ifdef DEBUG
+unsigned long loopcurrenttime;
+#endif
+// ----------------------- MP3 Player Feedback --------------------------------
 
 class Mp3Notify {
 public:
@@ -165,7 +163,6 @@ public:
   }
 };
 
-
 inline void dmpDataReady() {
   mpuInterruptDetected = true;
 }
@@ -190,74 +187,61 @@ public:
 
 } clashState;
 
-static inline int8_t sign(int val) {
-  if (val < 0) return -1;
-  if (val == 0) return 0;
-  return 1;
+template<typename T> int8_t sign(T val) {
+  return (T(0) < val) - (val < T(0));
 }
 
 class SwingState : public State {
 public:
-  int swingCountDown = 8;
-  long swingStateTime = 0;
-  int initialSwingDirX, initialSwingDirY;
+  long swingStartTime = 0;
+  bool hasSwingingStopped = false;
+  int8_t initialSwingDirX, initialSwingDirY;
 
   SwingState()
     : State(SWING_STATE) {}
 
-  bool checkDir() {
-    int diff = 0;
-    if (sign(curGyro.x) != initialSwingDirX) {
-      diff++;
-    }
-    if (sign(curGyro.y) != initialSwingDirY) {
-      diff++;
-    }
+  // Checks if the direction of the saber has changed by comparing the signs of the gyro readings.
+  bool checkSwingDirChange() {
+    int8_t diff = 0;
+
+    diff += (sign(curGyro.x) != initialSwingDirX) ? 1 : 0;
+    diff += (sign(curGyro.y) != initialSwingDirY) ? 1 : 0;
     // Serial.print("Number of axis reversed:");
     // Serial.println(diff);
 
     if (diff >= 1) {
       return true;
     }
-
     return false;
   }
 
-  bool hasSwingingStopped = false;
   void init() override {
     Serial.println("State: SWING");
-    // myDFPlayer.setRepeatPlayCurrentTrack(false);
-    // for (int i = 0; i < swingCountDown; i++) {
-    //   getIMU();  // 3 ms each loop!
-    // }
-    // Serial.println(maxGyrMag);
+
     printQuaternion(curRotation);
-    if (maxGyrMag < GYR_SLOW_SWING_THRESHOLD) {
-      // Serial.println("SLOW SWING");
+    if (maxGyrMag < GYR_SLOW_SWING_THRESHOLD) {  // TODO update this condition
+      Serial.println("SLOW SWING");
       myDFPlayer.playAdvertisement(random(1, NUM_SWING_SOUND + 1));
     } else {
-      // Serial.println("FAST SWING");
+      Serial.println("FAST SWING");
       myDFPlayer.playAdvertisement(random(1000, 1002));
     }
 
-
     initialSwingDirX = sign(curGyro.x);
     initialSwingDirY = sign(curGyro.y);
-    swingStateTime = millis();
+    swingStartTime = millis();
     hasSwingingStopped = false;
   }
   void run() override {
     // Check is reswing in different direction
-    if (checkSwing(true) && checkDir()) {
+    if (checkSwing(true) && checkSwingDirChange()) {
       Serial.println("RESWING");
       curVolume = curVolume + 4;
       goalVolume = curVolume;
       init();
     }
+
     // Adjust volume to saber swing speed
-    // long accMag = pow(curDeltAccel.x, 2) + pow(curDeltAccel.y, 2) + pow(curDeltAccel.z,2);
-    // //  long accMag = pow(curAccel.x, 2) + pow(curAccel.y, 2) + pow(curAccel.z,2);
-    // uint8_t adjusted_volume = (accMag / 16666) + MIN_SWING_VOLUME; // 1666666 too large
     uint8_t adjusted_volume = (curGyrMag / 200) + MIN_SWING_VOLUME;
     adjusted_volume = constrain(adjusted_volume, MIN_SWING_VOLUME, MAX_SWING_VOLUME);
 
@@ -268,12 +252,11 @@ public:
       hasSwingingStopped = curRotation.w * 1000 < 999;
     }
 
-    if (((millis() - swingStateTime) > SWING_STATE_TIME_MS)) {
-      Serial.println("RESET");
+    if (((millis() - swingStartTime) > SWING_STATE_TIME_MS)) {
+      Serial.println("EXITING SWING STATE");
       resetSaber = true;
       isSoundDone = false;
       goalVolume = VOLUME;
-      return;
     } else if (hasSwingingStopped) {
       goalVolume = MIN_SWING_VOLUME;
     } else {
@@ -292,7 +275,7 @@ inline void printQuaternion(Quaternion quaternion) {
   Serial.print(quaternion.y);
   Serial.print(F("\t\tz="));
   Serial.println(quaternion.z);
-}  //printQuaternion
+}
 
 inline void motionEngine() {
   if (!dmpReady)
@@ -301,6 +284,8 @@ inline void motionEngine() {
   mpuInterruptDetected = false;
   mpuIntStatus = mpu.getIntStatus();  // INT_STATUS byte
   mpuFifoCount = mpu.getFIFOCount();
+
+  // IF FIFO OVERFLOW
   if ((mpuIntStatus & 0x10) || mpuFifoCount == 1024) {
     // reset so we can continue cleanly
     mpu.resetFIFO();
@@ -309,30 +294,34 @@ inline void motionEngine() {
     curDeltAccel.z = 0;
   } else if (mpuIntStatus & 0x02) {
     // wait for correct available data length, should be a VERY short wait
-    while (mpuFifoCount < DMPpacketSize)
+    while (mpuFifoCount < DMPpacketSize) {
       mpuFifoCount = mpu.getFIFOCount();
+    }
 
     // read a packet from FIFO
     mpu.getFIFOBytes(mpuFifoBuffer, DMPpacketSize);
 
     // track FIFO count here in case there is > 1 packet available
     // (this lets us immediately read more without waiting for an interrupt)
-    mpuFifoCount -= DMPpacketSize;
+    // mpuFifoCount -= DMPpacketSize;
 
+    // ORIENTATION
     prevOrientation = curOrientation.getConjugate();
-    prevAccel = curAccel;
-
     mpu.dmpGetQuaternion(&curOrientation, mpuFifoBuffer);
 
-    mpu.dmpGetAccel(&curAccel, mpuFifoBuffer);
-    curDeltAccel.x = prevAccel.x - curAccel.x;
-    curDeltAccel.y = prevAccel.y - curAccel.y;
-    curDeltAccel.z = prevAccel.z - curAccel.z;
-    //We calculate the rotation quaternion since last orientation
+    // ROTATION
     prevRotation = curRotation;
     curRotation = prevOrientation.getProduct(
       curOrientation.getNormalized());
 
+    // ACCELERATION
+    prevAccel = curAccel;
+    mpu.dmpGetAccel(&curAccel, mpuFifoBuffer);
+    curDeltAccel.x = prevAccel.x - curAccel.x;
+    curDeltAccel.y = prevAccel.y - curAccel.y;
+    curDeltAccel.z = prevAccel.z - curAccel.z;
+
+    // GYRO
     mpu.dmpGetGyro(&curGyro, mpuFifoBuffer);
     curGyrMag = sq(curGyro.x) + sq(curGyro.y) + sq(curGyro.y);
     avgGyrMag = curGyrMag * 0.7 + avgGyrMag * (1 - 0.7);
@@ -340,20 +329,11 @@ inline void motionEngine() {
     if (millis() - maxGyrTimeStamp > 30) {
       maxGyrMag = 0;
     }
-
     if (curGyrMag > maxGyrMag) {
       maxGyrMag = curGyrMag;
       maxGyrTimeStamp = millis();
     }
-
-    // display quaternion values in easy matrix form: w x y z
     // printQuaternion(curRotation);
-    // Serial.print("x");
-    // Serial.print(curAccel.x);
-    // Serial.print("y");
-    // Serial.print(curAccel.y);
-    // Serial.print("z");
-    // Serial.println(curAccel.z);
   }
 }
 
@@ -361,36 +341,37 @@ bool checkSwing(bool isReswing) {
   motionEngine();
 
   if (!isReswing && (millis() - last_swing_time) < SWING_TIMEOUT_MS) {
+    Serial.println("NO SWINING YET");
     return false;
   } else if (isReswing && (millis() - last_swing_time) < RESWING_TIMEOUT_MS) {
+    Serial.println("NO RESWINING YET");
     return false;
   }
 
   if (abs(curRotation.w * 1000) < 999) {  // some rotation movement have been initiated
     if (
+      // General Swing
       (abs(curDeltAccel.x) > ACC_SWING_THRESHOLD
-        or abs(curDeltAccel.z) > ACC_SWING_THRESHOLD
-        or abs(curDeltAccel.y) > ACC_SWING_THRESHOLD * 10)
-       // the movement must not be triggered by pure blade rotation (wrist rotation)
-       or (abs(curDeltAccel.x) > abs(curDeltAccel.z)
-           and abs(prevDeltAccel.x) > ACC_SWING_THRESHOLD
-           and ((prevDeltAccel.x > 0
-                 and curDeltAccel.x < -ACC_SWING_THRESHOLD
+       or abs(curDeltAccel.z) > ACC_SWING_THRESHOLD
+       or abs(curDeltAccel.y) > ACC_SWING_THRESHOLD * 10)
+      // Reswing Horizontal
+      or (abs(curDeltAccel.x) > abs(curDeltAccel.z)
+          and (abs(prevDeltAccel.x) > ACC_SWING_THRESHOLD)
+          and ((prevDeltAccel.x > 0
+                  and curDeltAccel.x < -ACC_SWING_THRESHOLD
                 or (prevDeltAccel.x < 0
                     and curDeltAccel.x > ACC_SWING_THRESHOLD))))
-
-       or (abs(curDeltAccel.z) > abs(curDeltAccel.x)
-           and abs(prevDeltAccel.z) > ACC_SWING_THRESHOLD
-           and ((prevDeltAccel.z > 0
-                 and curDeltAccel.z < -ACC_SWING_THRESHOLD)
-                or (prevDeltAccel.z < 0
-                    and curDeltAccel.z > ACC_SWING_THRESHOLD)))
-                    
-
-      // the movement must not be triggered by pure blade rotation (wrist rotation)
-      and not(
-        abs(prevRotation.y * 1000 - curRotation.y * 1000) > abs(prevRotation.x * 1000 - curRotation.x * 1000)
-        and abs(prevRotation.y * 1000 - curRotation.y * 1000) > abs(prevRotation.z * 1000 - curRotation.z * 1000))) {
+      // Reswing Vertical
+      or (abs(curDeltAccel.z) > abs(curDeltAccel.x)
+          and (abs(prevDeltAccel.z) > ACC_SWING_THRESHOLD)
+          and ((prevDeltAccel.z > 0
+                and curDeltAccel.z < -ACC_SWING_THRESHOLD)
+               or (prevDeltAccel.z < 0
+                   and curDeltAccel.z > ACC_SWING_THRESHOLD)))
+           // must not be triggered by pure blade rotation (wrist rotation)
+           and not(
+             (abs(prevRotation.y * 1000 - curRotation.y * 1000) > abs(prevRotation.x * 1000 - curRotation.x * 1000))
+             and (abs(prevRotation.y * 1000 - curRotation.y * 1000) > abs(prevRotation.z * 1000 - curRotation.z * 1000)))) {
 
       // Serial.print(F("Acceleration\tx="));
       // Serial.print(curDeltAccel.x);
@@ -415,18 +396,18 @@ bool checkSwing(bool isReswing) {
   return false;
 }
 
-
 class IdleState : public State {
 public:
   IdleState()
     : State(IDLE_STATE) {}
   void init() override {
-    resetSaber = false;
-
     Serial.println("State: IDLE");
+
+    resetSaber = false;
     goalVolume = VOLUME;
+    
     myDFPlayer.playFolderTrack(GENERAL_SOUND_FOLDER, HUM_SOUND);
-    myDFPlayer.setRepeatPlayCurrentTrack(true);
+    
   }
 
   void run() override {
@@ -459,8 +440,10 @@ public:
 
   void run() override {
     if (isSoundDone) {
+      myDFPlayer.setRepeatPlayCurrentTrack(true);
       nextState = &idleState;
       isSoundDone = false;
+      
     }
   }
 } offState;
@@ -480,24 +463,22 @@ public:
 
 
 void updateVolume() {
-
-  if (abs(curVolume - goalVolume) > 0.4) {
-    if (curVolume < goalVolume) {  // Increasing volume
-      curVolume = goalVolume * VOLUME_LERP + curVolume * (1 - VOLUME_LERP);
-    } else {  // Decreasing volume
-      curVolume = goalVolume * VOLUME_LERP * 2 + curVolume * (1 - VOLUME_LERP * 2);
-    }
-
-    if (int(curVolume) != prevVolume) {
-      Serial.println(int(curVolume));
-      myDFPlayer.setVolume((int)curVolume);
-      prevVolume = curVolume;
-    }
+  if (curVolume < goalVolume) {  // Increasing volume
+    curVolume = goalVolume * VOLUME_LERP + curVolume * (1 - VOLUME_LERP);
+  } else {  // Decreasing volume
+    curVolume = goalVolume * VOLUME_LERP * 2 + curVolume * (1 - VOLUME_LERP * 2); // Fast to go silent to taper swings
   }
+
+  if (int(curVolume) != prevVolume) {
+    Serial.println(int(curVolume));
+    myDFPlayer.setVolume((int)curVolume);
+    prevVolume = curVolume;
+  }
+  
 }
 
 void loop() {
-#ifdef LS_LOOPLENGHT
+#ifdef DEBUG
   Serial.println(millis() - loopcurrenttime);
   loopcurrenttime = millis();
 #endif
@@ -524,7 +505,6 @@ void setupStates() {
 
 // TODO Implement
 void setupLED() {
-  return 0;
 
   // for (int i = NUM_PIXELS; i > -1; i--)
   // {
