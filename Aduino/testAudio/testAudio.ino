@@ -58,11 +58,11 @@ void setup() {
   myDFPlayer.begin();
   
  
-  Serial.println(F("DFPlayer Mini online."));
-  myDFPlayer.setRepeatPlayCurrentTrack(true);
-  myDFPlayer.setVolume(20);  //Set volume value. From 0 to 30
+  
+  myDFPlayer.setRepeatPlayCurrentTrack(false);
+  myDFPlayer.setVolume(25);  //Set volume value. From 0 to 30
   myDFPlayer.playFolderTrack(1, 4);
-
+Serial.println(F("DFPlayer Mini online."));
 }
 
 int dir = -1;
@@ -70,20 +70,20 @@ int volume = 15;
 void loop() {
   myDFPlayer.loop();
   static unsigned long timer = millis();
-  Serial.println(volume);
-  if (millis() - timer > 100) {
-    timer = millis();
-    volume += dir;
+  // Serial.println(volume);
+  // if (millis() - timer > 100) {
+  //   timer = millis();
+  //   volume += dir;
 
-    if (volume > 30) {
-      volume = 30;
-      dir = -1;
-    }
-    if (volume < 15) {
-      volume = 15;
-      dir = 1;
-    }
-    myDFPlayer.setVolume(volume);
-  }
+  //   if (volume > 30) {
+  //     volume = 30;
+  //     dir = -1;
+  //   }
+  //   if (volume < 15) {
+  //     volume = 15;
+  //     dir = 1;
+  //   }
+  //   myDFPlayer.setVolume(volume);
+  // }
 
 }

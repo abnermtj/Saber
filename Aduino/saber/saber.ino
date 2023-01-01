@@ -1,7 +1,7 @@
 #include "Arduino.h"
 #include "SoftwareSerial.h"
 #include "DFMiniMp3.h"
-#include "MPU9250.h"
+#include <MPU6050_6Axis_MotionApps20.h>
 #include "NonBlockingDelay.h"
 #include <Adafruit_NeoPixel.h>
 #ifdef __AVR__
@@ -9,7 +9,7 @@
 #endif
 
 // ---------------------------- DEBUG -------------------------------
-#define LS_LOOPLENGHT
+//  #define LS_LOOPLENGHT
 #ifdef LS_LOOPLENGHT
 unsigned long loopcurrenttime;
 #endif
@@ -18,6 +18,7 @@ unsigned long loopcurrenttime;
 // ---------------------------- PINOUT -------------------------------
 #define MP3_RX_PIN 10
 #define MP3_TX_PIN 11
+#define MPU_INTERRUPT_PIN 2
 
 // ---------------------------- MP3 -------------------------------
 #define GENERAL_SOUND_FOLDER 1
@@ -46,28 +47,48 @@ DfMp3 myDFPlayer(softSerial);
 
 float curVolume = 0;
 float goalVolume = 0;
-// ---------------------------- IMU -------------------------------
-MPU9250 mpu;
 
-float accX, accY, accZ;
-float gyrX, gyrY, gyrZ;
+// ---------------------------- IMU -------------------------------
+MPU6050 mpu;
+
+Quaternion curRotation;             // [w, x, y, z]         estimated of rotational forces
+Quaternion prevRotation;            // [w, x, y, z]
+static Quaternion prevOrientation;  // [w, x, y, z]         hold an estimate of the angle in space
+static Quaternion curOrientation;   // [w, x, y, z]
+VectorInt16 curAccel;
+VectorInt16 prevAccel;
+VectorInt16 curDeltAccel;
+VectorInt16 prevDeltAccel;
+VectorInt16 curGyro;
+long curGyrMag, maxGyrMag, avgGyrMag = 0;
+long maxGyrTimeStamp = 0;
 
 unsigned long swing_timer;
 long last_swing_time = 0;
 
+volatile bool mpuInterruptDetected = false;
+uint8_t mpuIntStatus;    // holds actual interrupt status byte from MPU
+uint16_t DMPpacketSize;  // expected DMP packet size (default  42 bytes)
+uint8_t mpuFifoBuffer[64];
+uint16_t mpuFifoCount;  // count of all bytes currently in FIFO
+
+bool dmpReady = false;
+I2Cdev i2ccomm;
 
 // ---------------------------- SETTINGS -------------------------------
 #define DEBUG 1
 #define VOLUME 24  // From 0 to 30
-#define MIN_SWING_VOLUME 5
+#define MIN_SWING_VOLUME 20
 #define MAX_SWING_VOLUME 30
 #define NUM_PIXELS 144
-#define GYR_SWING_THRESHOLD 4000
+#define ACC_SWING_THRESHOLD 1000
 #define GYR_RESWING_THRESHOLD 10000
 #define GYR_SLOW_SWING_THRESHOLD 9000
 #define SWING_TIMEOUT_MS 500
 #define RESWING_TIMEOUT_MS 400
-#define VOLUME_LERP 0.04
+#define VOLUME_LERP 0.043
+#define CLASH_THRESHOLD 10
+
 // ---------------------------- STATES -------------------------------
 #define START_STATE 0
 #define OFF_STATE 1
@@ -144,30 +165,16 @@ public:
   }
 };
 
-long curGyrMag, maxGyrMag, avgGyrMag = 0;
-long maxGyrTimeStamp = 0;
-void getIMU() {
-  if (mpu.update()) {
-    accX = mpu.getAccX();
-    accY = mpu.getAccY();
-    accZ = mpu.getAccZ();
-    gyrX = mpu.getGyroX();
-    gyrY = mpu.getGyroY();
-    // gyrZ = mpu.getGyroZ();
-    gyrZ = 0;
 
-    curGyrMag = sq(gyrX) + sq(gyrY) + sq(gyrZ);
-    avgGyrMag = curGyrMag * 0.7 + avgGyrMag * (1 - 0.7);
+inline void dmpDataReady() {
+  mpuInterruptDetected = true;
+}
 
-    if (millis() - maxGyrTimeStamp > 30) {
-      maxGyrMag = 0;
-    }
-
-    if (curGyrMag > maxGyrMag) {
-      maxGyrMag = curGyrMag;
-      maxGyrTimeStamp = millis();
-    }
-  }
+void ISR_MPUInterrupt() {
+  Serial.println("CLASH detected");
+  // if (curState.getID() = '') {  // TODO SABER CLASH HERE
+  //   nextState = CLASH_STATE();
+  // }
 }
 class ClashState : public State {
 public:
@@ -189,8 +196,6 @@ static inline int8_t sign(int val) {
   return 1;
 }
 
-
-// TODO https://therebelarmory.com/thread/9138/smoothswing-v2-algorithm-description
 class SwingState : public State {
 public:
   int swingCountDown = 8;
@@ -202,48 +207,35 @@ public:
 
   //TODO
   bool checkDir() {
-    int diff = 0;
-    if (sign(gyrX) != initialSwingDirX) {
-      diff++;
-    }
-    if (sign(gyrY) != initialSwingDirY) {
-      diff++;
-    }
-    // if (sign(gyrZ) != initialSwingDirZ) {
+    // int diff = 0;
+    // if (sign(gyrX) != initialSwingDirX) {
     //   diff++;
     // }
-    // Serial.print("Number of axis reversed:");
-    // Serial.println(diff);
+    // if (sign(gyrY) != initialSwingDirY) {
+    //   diff++;
+    // }
+    // // if (sign(gyrZ) != initialSwingDirZ) {
+    // //   diff++;
+    // // }
+    // // Serial.print("Number of axis reversed:");
+    // // Serial.println(diff);
 
-    if (diff >= 1) {
-      return true;
-    }
-
-    return false;
-  }
-
-  bool checkReSwing() {
-    if ((millis() - last_swing_time) < RESWING_TIMEOUT_MS) {
-      return false;
-    }
-
-    getIMU();
-
-    if (curGyrMag > GYR_RESWING_THRESHOLD) {
-      last_swing_time = millis();
-      return true;
-    }
+    // if (diff >= 1) {
+    //   return true;
+    // }
 
     return false;
   }
 
+  bool hasSwingingStopped = false;
   void init() override {
-    Serial.println("SWING");
+    Serial.println("State: SWING");
     // myDFPlayer.setRepeatPlayCurrentTrack(false);
-    for (int i = 0; i < swingCountDown; i++) {
-      getIMU();  // 3 ms each loop!
-    }
-    Serial.println(maxGyrMag);
+    // for (int i = 0; i < swingCountDown; i++) {
+    //   getIMU();  // 3 ms each loop!
+    // }
+    // Serial.println(maxGyrMag);
+    printQuaternion(curRotation);
     if (maxGyrMag < GYR_SLOW_SWING_THRESHOLD) {
       // Serial.println("SLOW SWING");
       myDFPlayer.playAdvertisement(random(1, NUM_SWING_SOUND + 1));
@@ -252,33 +244,41 @@ public:
       myDFPlayer.playAdvertisement(random(1000, 1002));
     }
 
-    initialSwingDirX = sign(gyrX);
-    initialSwingDirY = sign(gyrY);
-    initialSwingDirZ = sign(gyrZ);
+    // initialSwingDirX = sign(gyrX);
+    // initialSwingDirY = sign(gyrY);
+    // initialSwingDirZ = sign(gyrZ);
     swingStateTime = millis();
+    hasSwingingStopped = false;
   }
   void run() override {
-
     // Check is reswing in different direction
-    if (checkReSwing() && checkDir()) {
+    if (checkSwing() && checkDir()) {
       Serial.println("RESWING");
       init();
     }
     // Adjust volume to saber swing speed
-    int adjusted_volume = (avgGyrMag / 200) + MIN_SWING_VOLUME;
+    // long accMag = pow(curDeltAccel.x, 2) + pow(curDeltAccel.y, 2) + pow(curDeltAccel.z,2);
+    // //  long accMag = pow(curAccel.x, 2) + pow(curAccel.y, 2) + pow(curAccel.z,2);
+    // uint8_t adjusted_volume = (accMag / 16666) + MIN_SWING_VOLUME; // 1666666 too large
+    uint8_t adjusted_volume = (avgGyrMag / 200) + MIN_SWING_VOLUME;
     adjusted_volume = constrain(adjusted_volume, MIN_SWING_VOLUME, MAX_SWING_VOLUME);
 
-    // Serial.print("avgGyrMag: ");
-    // Serial.print(avgGyrMag);
     // Serial.print(" adjusted_volume:");
     // Serial.println(adjusted_volume);
+
+    if (!hasSwingingStopped) {
+      hasSwingingStopped = curRotation.w * 1000 < 999;
+    }
+
     if (((millis() - swingStateTime) > SWING_STATE_TIME_MS)
-        || (adjusted_volume == MIN_SWING_VOLUME)) {
+       ) {
       Serial.println("RESET");
       resetSaber = true;
       isSoundDone = false;
       goalVolume = VOLUME;
       return;
+    } else if (hasSwingingStopped){
+      goalVolume = MIN_SWING_VOLUME;
     } else {
       goalVolume = adjusted_volume;
     }
@@ -286,14 +286,107 @@ public:
 
 } swingState;
 
+inline void printQuaternion(Quaternion quaternion) {
+  Serial.print(F("\t\tQ\t\tw="));
+  Serial.print(quaternion.w * 1000);
+  Serial.print(F("\t\tx="));
+  Serial.print(quaternion.x);
+  Serial.print(F("\t\ty="));
+  Serial.print(quaternion.y);
+  Serial.print(F("\t\tz="));
+  Serial.println(quaternion.z);
+}  //printQuaternion
+
+inline void motionEngine() {
+  if (!dmpReady)
+    return;
+
+  mpuInterruptDetected = false;
+  mpuIntStatus = mpu.getIntStatus();  // INT_STATUS byte
+  mpuFifoCount = mpu.getFIFOCount();
+  if ((mpuIntStatus & 0x10) || mpuFifoCount == 1024) {
+    // reset so we can continue cleanly
+    mpu.resetFIFO();
+    curDeltAccel.x = 0;
+    curDeltAccel.y = 0;
+    curDeltAccel.z = 0;
+  } else if (mpuIntStatus & 0x02) {
+    // wait for correct available data length, should be a VERY short wait
+    while (mpuFifoCount < DMPpacketSize)
+      mpuFifoCount = mpu.getFIFOCount();
+
+    // read a packet from FIFO
+    mpu.getFIFOBytes(mpuFifoBuffer, DMPpacketSize);
+
+    // track FIFO count here in case there is > 1 packet available
+    // (this lets us immediately read more without waiting for an interrupt)
+    mpuFifoCount -= DMPpacketSize;
+
+    prevOrientation = curOrientation.getConjugate();
+    prevAccel = curAccel;
+
+    mpu.dmpGetQuaternion(&curOrientation, mpuFifoBuffer);
+
+    mpu.dmpGetAccel(&curAccel, mpuFifoBuffer);
+    curDeltAccel.x = prevAccel.x - curAccel.x;
+    curDeltAccel.y = prevAccel.y - curAccel.y;
+    curDeltAccel.z = prevAccel.z - curAccel.z;
+    //We calculate the rotation quaternion since last orientation
+    prevRotation = curRotation;
+    curRotation = prevOrientation.getProduct(
+      curOrientation.getNormalized());
+
+    mpu.dmpGetGyro(&curGyro, mpuFifoBuffer);
+    curGyrMag = sq(curGyro.x) + sq(curGyro.y) + sq(curGyro.y);
+    avgGyrMag = curGyrMag * 0.7 + avgGyrMag * (1 - 0.7);
+
+    if (millis() - maxGyrTimeStamp > 30) {
+      maxGyrMag = 0;
+    }
+
+    if (curGyrMag > maxGyrMag) {
+      maxGyrMag = curGyrMag;
+      maxGyrTimeStamp = millis();
+    }
+
+    // display quaternion values in easy matrix form: w x y z
+    // printQuaternion(curRotation);
+    // Serial.print("x");
+    // Serial.print(curAccel.x);
+    // Serial.print("y");
+    // Serial.print(curAccel.y);
+    // Serial.print("z");
+    // Serial.println(curAccel.z);
+  }
+}
+
 bool checkSwing() {
+  motionEngine();
+
   if ((millis() - last_swing_time) < SWING_TIMEOUT_MS) {
     return false;
   }
 
-  getIMU();
+  if (abs(curRotation.w * 1000) < 999  // some rotation movement have been initiated
+      and ((abs(curDeltAccel.x) > ACC_SWING_THRESHOLD
+            or abs(curDeltAccel.z) > ACC_SWING_THRESHOLD
+            or abs(curDeltAccel.y) > ACC_SWING_THRESHOLD * 10))) {
+    // Serial.print(F("Acceleration\tx="));
+    // Serial.print(curDeltAccel.x);
+    // Serial.print(F("\ty="));
+    // Serial.print(curDeltAccel.y);
+    // Serial.print(F("\tz="));
+    // Serial.print(curDeltAccel.z);
+    // Serial.print(F("\tcurRotation\tw="));
+    // Serial.print(curRotation.w * 1000);
+    // Serial.print(F("\t\tx="));
+    // Serial.print(curRotation.x);
+    // Serial.print(F("\t\ty="));
+    // Serial.print(curRotation.y);
+    // Serial.print(F("\t\tz="));
+    // Serial.println(curRotation.z);
 
-  if (curGyrMag > GYR_SWING_THRESHOLD) {
+
     last_swing_time = millis();
     return true;
   }
@@ -309,15 +402,13 @@ public:
   void init() override {
     resetSaber = false;
 
-    Serial.println("IDLE");
+    Serial.println("State: IDLE");
     goalVolume = VOLUME;
     myDFPlayer.playFolderTrack(GENERAL_SOUND_FOLDER, HUM_SOUND);
     myDFPlayer.setRepeatPlayCurrentTrack(true);
   }
 
   void run() override {
-
-
     if (checkSwing()) {
       nextState = &swingState;
       isSoundDone = false;
@@ -341,7 +432,7 @@ public:
   void init() override {
     // TODO Create a power saving mode when "off"
     // TODO ignite only if button pressed
-    Serial.println("OFF");
+    Serial.println("State: OFF");
     igniteSaber();
   }
 
@@ -369,11 +460,12 @@ public:
 
 void updateVolume() {
   if (abs(curVolume - goalVolume) > 0.4) {
-    if (curVolume < goalVolume) { // Increasing volume
+    if (curVolume < goalVolume) {  // Increasing volume
       curVolume = goalVolume * VOLUME_LERP + curVolume * (1 - VOLUME_LERP);
-    } else { // Decreasing volume
+    } else {  // Decreasing volume
       curVolume = goalVolume * VOLUME_LERP * 2 + curVolume * (1 - VOLUME_LERP * 2);
     }
+    Serial.println(curVolume);
     myDFPlayer.setVolume((int)curVolume);
   }
 }
@@ -414,13 +506,61 @@ void setupLED() {
   //   pixels.show();
   // }
 }
-void setupIMU() {
-  Wire.begin();
-  delay(1500);        // Wait for mpu to initialize
-  mpu.verbose(true);  // Debug
-  mpu.setup(0x68);    // Set to i2c address of mpu
 
-  Serial.println(F("IMU online."));
+void setupIMU() {
+  mpu.initialize();
+  Serial.println(
+    mpu.testConnection() ? F("MPU6050 connection successful") : F("MPU6050 connection failed"));
+
+
+  Serial.println(F("Initializing DMP..."));
+  uint8_t devStatus = mpu.dmpInitialize_light();
+
+  // These values are hard coded for the IMU
+  mpu.setXAccelOffset(-3289);
+  mpu.setYAccelOffset(-1392);
+  mpu.setZAccelOffset(516);
+  mpu.setXGyroOffset(240);
+  mpu.setYGyroOffset(9);
+  mpu.setZGyroOffset(27);
+
+  if (devStatus == 0) {
+    mpu.setDMPEnabled(true);
+
+    attachInterrupt(0, dmpDataReady, RISING);
+    mpuIntStatus = mpu.getIntStatus();
+
+    dmpReady = true;
+    DMPpacketSize = mpu.dmpGetFIFOPacketSize();
+    Serial.println(F("DMP READY"));
+  }
+
+  // configure the motion interrupt for clash recognition
+  // INT_PIN_CFG register
+  mpu.setDLPFMode(3);  // Digital Low-Pass Frequenct
+  mpu.setDHPFMode(0);  // Digital High-Pass Frequency
+  //mpu.setFullScaleAccelRange(3);
+  mpu.setIntMotionEnabled(true);
+  mpu.setIntZeroMotionEnabled(false);
+  mpu.setIntFIFOBufferOverflowEnabled(false);
+  mpu.setIntI2CMasterEnabled(false);
+  mpu.setIntDataReadyEnabled(false);
+  mpu.setMotionDetectionThreshold(CLASH_THRESHOLD);  // 1mg/LSB
+  mpu.setMotionDetectionDuration(2);                 // number of consecutive samples above threshold to trigger int
+
+
+  // configure Interrupt with:
+  // int level active low
+  // int driver open drain
+  // interrupt latched until read out (not 50us pulse)
+  i2ccomm.writeByte(MPU6050_DEFAULT_ADDRESS, 0x37, 0xF0);
+  // enable only Motion Interrupt
+  i2ccomm.writeByte(MPU6050_DEFAULT_ADDRESS, 0x38, 0x40);
+  mpuIntStatus = mpu.getIntStatus();
+
+  pinMode(MPU_INTERRUPT_PIN, INPUT_PULLUP);
+  attachInterrupt(0, ISR_MPUInterrupt, FALLING);  // ISR
+  Serial.println(F("IMU intterupts READY"));
 }
 
 void setupAudio() {
@@ -438,7 +578,7 @@ void setupGeneral() {
   while (!Serial) {
   }
 
-  Serial.println(F("General setup."));
+  Serial.println(F("General setup done."));
 }
 
 void setup() {
