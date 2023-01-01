@@ -8,6 +8,13 @@
 #include <avr/power.h>
 #endif
 
+// ---------------------------- DEBUG -------------------------------
+#define LS_LOOPLENGHT
+#ifdef LS_LOOPLENGHT
+unsigned long loopcurrenttime;
+#endif
+
+
 // ---------------------------- PINOUT -------------------------------
 #define MP3_RX_PIN 10
 #define MP3_TX_PIN 11
@@ -60,7 +67,7 @@ long last_swing_time = 0;
 #define GYR_SLOW_SWING_THRESHOLD 9000
 #define SWING_TIMEOUT_MS 500
 #define RESWING_TIMEOUT_MS 400
-#define VOLUME_LERP 0.04 
+#define VOLUME_LERP 0.04
 // ---------------------------- STATES -------------------------------
 #define START_STATE 0
 #define OFF_STATE 1
@@ -239,7 +246,7 @@ public:
     Serial.println(maxGyrMag);
     if (maxGyrMag < GYR_SLOW_SWING_THRESHOLD) {
       // Serial.println("SLOW SWING");
-      myDFPlayer.playAdvertisement(random(1, NUM_SWING_SOUND+1));
+      myDFPlayer.playAdvertisement(random(1, NUM_SWING_SOUND + 1));
     } else {
       // Serial.println("FAST SWING");
       myDFPlayer.playAdvertisement(random(1000, 1002));
@@ -250,7 +257,7 @@ public:
     initialSwingDirZ = sign(gyrZ);
     swingStateTime = millis();
   }
-  void run() override {  
+  void run() override {
 
     // Check is reswing in different direction
     if (checkReSwing() && checkDir()) {
@@ -273,7 +280,7 @@ public:
       goalVolume = VOLUME;
       return;
     } else {
-       goalVolume = adjusted_volume;
+      goalVolume = adjusted_volume;
     }
   }
 
@@ -320,10 +327,10 @@ public:
 
 void igniteSaber() {
   myDFPlayer.setVolume(0);  // DEBUG
-  curVolume = 0; // DEBUG
-  goalVolume = 0; // DEBUG
+  curVolume = 0;            // DEBUG
+  goalVolume = 0;           // DEBUG
   myDFPlayer.setRepeatPlayCurrentTrack(false);
-  myDFPlayer.playFolderTrack(IGNITE_SOUND_FOLDER, random(1, NUM_IGNITE_SOUND+1));
+  myDFPlayer.playFolderTrack(IGNITE_SOUND_FOLDER, random(1, NUM_IGNITE_SOUND + 1));
 }
 
 class OffState : public State {
@@ -362,35 +369,33 @@ public:
 
 void updateVolume() {
   if (abs(curVolume - goalVolume) > 0.4) {
-    if (curVolume < goalVolume) {
-    curVolume = goalVolume * VOLUME_LERP + curVolume * (1 - VOLUME_LERP); 
-     }
-    else {
-       curVolume = goalVolume * VOLUME_LERP * 2 + curVolume * (1 - VOLUME_LERP*2); 
+    if (curVolume < goalVolume) { // Increasing volume
+      curVolume = goalVolume * VOLUME_LERP + curVolume * (1 - VOLUME_LERP);
+    } else { // Decreasing volume
+      curVolume = goalVolume * VOLUME_LERP * 2 + curVolume * (1 - VOLUME_LERP * 2);
     }
     myDFPlayer.setVolume((int)curVolume);
   }
-
-//  delay(30); // TODO find out  if this line  needed 
-   Serial.println(curVolume);
 }
 
 void loop() {
+#ifdef LS_LOOPLENGHT
+  Serial.println(millis() - loopcurrenttime);
+  loopcurrenttime = millis();
+#endif
+
+  updateVolume();
+  myDFPlayer.loop();
+
   if (resetSaber) {
     nextState = &idleState;
   }
-  if (curState->getID() != nextState->getID()) {
-    // Serial.print(F("Changing from state "));
-    // Serial.print((int)curState->getID());
-    // Serial.print(F(" to state "));
-    // Serial.println((int)nextState->getID());
 
+  if (curState->getID() != nextState->getID()) {
     curState = nextState;
     curState->init();
   }
 
-  updateVolume();
-  myDFPlayer.loop();
   curState->run();
 }
 
@@ -399,8 +404,9 @@ void setupStates() {
   nextState = &offState;
 }
 
+// TODO Implement
 void setupLED() {
-  return 0;  // tODO implement and uncomment
+  return 0;
 
   // for (int i = NUM_PIXELS; i > -1; i--)
   // {
@@ -411,7 +417,7 @@ void setupLED() {
 void setupIMU() {
   Wire.begin();
   delay(1500);        // Wait for mpu to initialize
-  mpu.verbose(true);  // For debug
+  mpu.verbose(true);  // Debug
   mpu.setup(0x68);    // Set to i2c address of mpu
 
   Serial.println(F("IMU online."));
@@ -426,13 +432,17 @@ void setupAudio() {
   Serial.println(F("DFPlayer Mini online."));
 }
 
-void setup() {
+void setupGeneral() {
   randomSeed(analogRead(0));
   Serial.begin(115200);
   while (!Serial) {
-    ;  // wait for serial port to connect. Needed for native USB
   }
 
+  Serial.println(F("General setup."));
+}
+
+void setup() {
+  setupGeneral();
   setupAudio();
   setupIMU();
   setupLED();

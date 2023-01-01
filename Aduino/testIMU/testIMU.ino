@@ -14,18 +14,28 @@ void setup(void) {
 void loop(void) {
   if (mpu.update()) {
     
-    String url = "accX:";
-    url.concat(mpu.getAccX());
-    url.concat(", accY:");
-    url.concat(mpu.getAccY());
-    url.concat(", accZ:");
-    url.concat(mpu.getAccZ());
-    url.concat(", GyrX:");
-    url.concat(mpu.getGyroX());
-    url.concat(", GyrY:");
-    url.concat(mpu.getGyroY());
-    url.concat(", GyrZ:");
-    url.concat(mpu.getGyroZ());
+     String url = "accX:";
+    // url.concat(mpu.getAccX());
+    // url.concat(", accY:");
+    // url.concat(mpu.getAccY());
+    // url.concat(", accZ:");
+    // url.concat(mpu.getAccZ());
+    // url.concat(", GyrX:");
+    // url.concat(mpu.getGyroX());
+    // url.concat(", GyrY:");
+    // url.concat(mpu.getGyroY());
+    // url.concat(", GyrZ:");
+    // url.concat(mpu.getGyroZ());
+    
+ 
+    url.concat(", QuatX:");
+    url.concat(mpu.getQuaternionX());
+    url.concat(", QuatY:");
+    url.concat(mpu.getQuaternionY());
+    url.concat(", QuatZ:");
+    url.concat(mpu.getQuaternionZ());
+    url.concat(", QuatW:");
+    url.concat(mpu.getQuaternionW());
     //url.concat(" ");
     //url.concat(millis());
     Serial.println(url);
