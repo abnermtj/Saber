@@ -38,6 +38,10 @@ SoftwareSerial softSerial(MP3_RX_PIN, MP3_TX_PIN);  // RXpin, TXpin
 typedef DFMiniMp3<SoftwareSerial, Mp3Notify> DfMp3;
 DfMp3 myDFPlayer(softSerial);
 
+// // typedef DFMiniMp3<Serial, Mp3Notify> DfMp3;
+// DFMiniMp3<Serial, Mp3Notify> myDFPlayer(Serial);
+
+
 float curVolume = 0;
 uint8_t prevVolume = 0;
 float goalVolume = 0;
@@ -71,12 +75,12 @@ I2Cdev i2ccomm;
 
 // ---------------------------- SETTINGS -------------------------------
 // #define DEBUG 1
-#define VOLUME 24  // From 0 to 30
+#define VOLUME 16  // From 0 to 30
 #define MIN_SWING_VOLUME 18
 #define MAX_SWING_VOLUME 29
 #define NUM_PIXELS 144
-#define ACC_SWING_THRESHOLD 1000
-#define GYR_SLOW_SWING_THRESHOLD 9000
+#define ACC_SWING_THRESHOLD 3000 // 1000 for smooth swing sensitvit
+#define GYR_SLOW_SWING_THRESHOLD 9000 // TODO update this
 #define SWING_TIMEOUT_MS 500
 #define RESWING_TIMEOUT_MS 250
 #define VOLUME_LERP 0.043
@@ -90,6 +94,7 @@ I2Cdev i2ccomm;
 #define CLASH_STATE 4
 
 #define SWING_STATE_TIME_MS 800
+#define CLASH_STATE_TIME_MS 900
 
 class State {
 private:
@@ -167,25 +172,35 @@ inline void dmpDataReady() {
   mpuInterruptDetected = true;
 }
 
-void ISR_MPUInterrupt() {
-  Serial.println("CLASH detected");
-  // if (curState.getID() = '') {  // TODO SABER CLASH HERE
-  //   nextState = CLASH_STATE();
-  // }
-}
+long clashStartTime;
 class ClashState : public State {
 public:
   ClashState()
     : State(CLASH_STATE) {}
   void init() override {
-    // TODO
+    Serial.println("State: Clash");
+    myDFPlayer.setRepeatPlayCurrentTrack(false);
+    myDFPlayer.playFolderTrack(CLASH_SOUND_FOLDER,random(1, 1 + NUM_CLASH_SOUND));
+    isSoundDone = false;
+    clashStartTime = millis();
   }
 
   void run() override {
+    if (isSoundDone || (millis() - clashStartTime) > CLASH_STATE_TIME_MS) {
+      Serial.println("exit: Clash");
+      isSoundDone = false;
+      resetSaber = true;
+    }
     // TODO
   }
 
 } clashState;
+
+void ISR_MPUInterrupt() {
+  Serial.println("CLASH detected");
+  
+  nextState = &clashState;
+}
 
 template<typename T> int8_t sign(T val) {
   return (T(0) < val) - (val < T(0));
@@ -216,9 +231,8 @@ public:
   }
 
   void init() override {
-    Serial.println("State: SWING");
-
-    printQuaternion(curRotation);
+    Serial.println("State: Swwing");
+    // printQuaternion(curRotation);
     if (maxGyrMag < GYR_SLOW_SWING_THRESHOLD) {  // TODO update this condition
       Serial.println("SLOW SWING");
       myDFPlayer.playAdvertisement(random(1, NUM_SWING_SOUND + 1));
@@ -226,11 +240,11 @@ public:
       Serial.println("FAST SWING");
       myDFPlayer.playAdvertisement(random(1000, 1002));
     }
-
     initialSwingDirX = sign(curGyro.x);
     initialSwingDirY = sign(curGyro.y);
     swingStartTime = millis();
     hasSwingingStopped = false;
+
   }
   void run() override {
     // Check is reswing in different direction
@@ -244,9 +258,6 @@ public:
     // Adjust volume to saber swing speed
     uint8_t adjusted_volume = (curGyrMag / 200) + MIN_SWING_VOLUME;
     adjusted_volume = constrain(adjusted_volume, MIN_SWING_VOLUME, MAX_SWING_VOLUME);
-
-    // Serial.print(" adjusted_volume:");
-    // Serial.println(adjusted_volume);
 
     if (!hasSwingingStopped) {
       hasSwingingStopped = curRotation.w * 1000 < 999;
@@ -341,10 +352,10 @@ bool checkSwing(bool isReswing) {
   motionEngine();
 
   if (!isReswing && (millis() - last_swing_time) < SWING_TIMEOUT_MS) {
-    Serial.println("NO SWINING YET");
+    // Serial.println("NO SWINING YET");
     return false;
   } else if (isReswing && (millis() - last_swing_time) < RESWING_TIMEOUT_MS) {
-    Serial.println("NO RESWINING YET");
+    // Serial.println("NO RESWINING YET");
     return false;
   }
 
@@ -470,7 +481,7 @@ void updateVolume() {
   }
 
   if (int(curVolume) != prevVolume) {
-    Serial.println(int(curVolume));
+    // Serial.println(int(curVolume));
     myDFPlayer.setVolume((int)curVolume);
     prevVolume = curVolume;
   }
