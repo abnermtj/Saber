@@ -220,7 +220,7 @@ public:
     int8_t diff = 0;
 
     diff += (sign(curGyro.x) != initialSwingDirX) ? 1 : 0;
-    diff += (sign(curGyro.y) != initialSwingDirY) ? 1 : 0;
+    diff += (sign(curGyro.z) != initialSwingDirY) ? 1 : 0;
     // Serial.print("Number of axis reversed:");
     // Serial.println(diff);
 
@@ -241,7 +241,7 @@ public:
       myDFPlayer.playAdvertisement(random(1000, 1002));
     }
     initialSwingDirX = sign(curGyro.x);
-    initialSwingDirY = sign(curGyro.y);
+    initialSwingDirY = sign(curGyro.z);
     swingStartTime = millis();
     hasSwingingStopped = false;
 
@@ -334,7 +334,7 @@ inline void motionEngine() {
 
     // GYRO
     mpu.dmpGetGyro(&curGyro, mpuFifoBuffer);
-    curGyrMag = sq(curGyro.x) + sq(curGyro.y) + sq(curGyro.y);
+    curGyrMag = sq(curGyro.x) + sq(curGyro.z);
     avgGyrMag = curGyrMag * 0.7 + avgGyrMag * (1 - 0.7);
 
     if (millis() - maxGyrTimeStamp > 30) {
