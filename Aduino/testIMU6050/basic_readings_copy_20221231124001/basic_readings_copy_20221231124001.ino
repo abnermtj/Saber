@@ -24,8 +24,6 @@ bool dmpReady = false;
 I2Cdev i2ccomm;
 
 
-int snd_hum1_freq = 50; 
-
 inline void dmpDataReady() {
   mpuInterruptDetected = true;
 }  //dmpDataReady
@@ -41,69 +39,25 @@ void setup(void) {
   while (!Serial)
     delay(10);  // will pause Zero, Leonardo, etc until serial console opens
 
-  mpu.initialize();
-  Serial.println(
-    mpu.testConnection() ? F("MPU6050 connection successful") : F("MPU6050 connection failed"));
 
-
-  Serial.println(F("Initializing DMP..."));
-  uint8_t devStatus = mpu.dmpInitialize_light();
-
-  mpu.setXAccelOffset(-3289);
-  mpu.setYAccelOffset(-1392);
-  mpu.setZAccelOffset(516);
-  mpu.setXGyroOffset(240);
-  mpu.setYGyroOffset(9);
-  mpu.setZGyroOffset(27);
-
-  if (devStatus == 0) {
-    mpu.setDMPEnabled(true);
-
-    attachInterrupt(0, dmpDataReady, RISING);
-    mpuIntStatus = mpu.getIntStatus();
-
-    dmpReady = true;
-    DMPpacketSize = mpu.dmpGetFIFOPacketSize();
-    Serial.println(F("DMP READY"));
-  }
-
-  // configure the motion interrupt for clash recognition
-  // INT_PIN_CFG register
-  mpu.setDLPFMode(3);  // Digital Low-Pass Frequenct
-  mpu.setDHPFMode(0);  // Digital High-Pass Frequency
-  //mpu.setFullScaleAccelRange(3);
-  mpu.setIntMotionEnabled(true);
-  mpu.setIntZeroMotionEnabled(false);
-  mpu.setIntFIFOBufferOverflowEnabled(false);
-  mpu.setIntI2CMasterEnabled(false);
-  mpu.setIntDataReadyEnabled(false);
-  mpu.setMotionDetectionThreshold(CLASH_THRESHOLD);  // 1mg/LSB
-  mpu.setMotionDetectionDuration(2);                 // number of consecutive samples above threshold to trigger int
-
-  // configure Interrupt with:
-  // int level active low
-  // int driver open drain
-  // interrupt latched until read out (not 50us pulse)
-  i2ccomm.writeByte(MPU6050_DEFAULT_ADDRESS, 0x37, 0xF0);
-  // enable only Motion Interrupt
-  i2ccomm.writeByte(MPU6050_DEFAULT_ADDRESS, 0x38, 0x40);
-  mpuIntStatus = mpu.getIntStatus();
-
-  pinMode(MPU_INTERRUPT_PIN, INPUT_PULLUP);
-  attachInterrupt(0, ISR_MPUInterrupt, FALLING);  // ISR
-  Serial.println(F("IMU intterupts READY"));
-
+  MPU6050_start();
+  Serial.println("STARTED MPU");
   // start sound system
   snd_init();
 }
 
 int ctrl_counter = 0;
 byte global_volume = 240;
-int snd_buzz_freq = 47;
-int snd_hum1_base_freq = 50;
-int snd_hum2_freq = 52;
-float snd_hum2_doppler = 40;
+int snd_buzz_base_speed = 47;
+int snd_hum1_base_speed = 50;
+int snd_hum2_base_speed = 52;
+int snd_hum2_doppler = 40;
 int snd_echo_decay = 128;
+unsigned int entropy = 0;
+void add_entropy(byte e, byte mask) {
+  entropy = entropy << 1 ^ (e & mask);
+}
+
 int accel[3];
 int accel_last[3];
 int gyro[3];
@@ -127,10 +81,8 @@ int accel_hum1_volume = 0;
 VectorInt16 curGyro;
 
 
-unsigned int entropy = 0;
-void add_entropy(byte e, byte mask) {
-  entropy = entropy << 1 ^ (e & mask);
-}
+
+
 float vec3_length(float *v) {
   float r = 0;
   for (int i = 0; i < 3; i++) r += (v[i] * v[i]);
@@ -159,7 +111,7 @@ int value_delta(int value, int delta, int vmin, int vmax) {
 
 
 void loop() {
-  motionEngine();
+  // motionEngine();
 
   int i, n, delta;
   float av, rv;
@@ -169,13 +121,15 @@ void loop() {
   ctrl_counter = ctrl_counter ^ 1;
   if ((ctrl_counter & 1) == 1) {
     // sample gyro
-    add_entropy(curGyro.x, 0x0F);
+    MPU6050_gyro_vector(gyro);
+    add_entropy(gyro[0], 0x0F);
     // int3_print(gyro);
     // rotation vector, made from only two axis components (ignore 'twist')
     float gv[3];
-    gv[0] = curGyro.x;
-    gv[1] = curGyro.z;
+    gv[0] = gyro[0];
+    gv[1] = gyro[2];
     gv[2] = 0.0;
+
     // vector length
     float rot = vec3_length(gv);
     rotation_offset -= (rotation_offset - rot) / 300.0;
@@ -183,16 +137,13 @@ void loop() {
     rv = (rot - rotation_offset) / 50.0;
     rv = (rotation_history + rv) / 2.0;
     rotation_history = rv;
-    // Serial.println(rv);
+    //  Serial.println(rv);
   } else {
-    // MPU6050_accel_vector(accel);
-    add_entropy(curAccel.x, 0x0F);
+    MPU6050_accel_vector(accel);
+    add_entropy(accel[0], 0x0F);
     // update the velocity vector
-    int acc[3];
-    acc[0] = curAccel.x;
-    acc[1] = curAccel.y;
-    acc[2] = curAccel.z;
-    vec3_addint(velocity, acc);
+
+    vec3_addint(velocity, accel);
     vec3_scale(velocity, 0.99);
     // turn velocity vector into scalar factor
     av = vec3_length(velocity) / 10000.0;
@@ -202,12 +153,12 @@ void loop() {
   }
 
   // check knobv
-n = analogRead(A0);
- add_entropy(n, 0x03);
+  n = analogRead(A0);
+  add_entropy(n, 0x03);
 
-   // use some entropy to modulate the sound volume
-  snd_buzz_speed = snd_buzz_freq + (entropy & 3);
-  snd_hum1_speed = snd_hum1_freq;
+  // use some entropy to modulate the sound volume
+  snd_buzz_speed = snd_buzz_base_speed + (entropy & 3);
+  snd_hum1_speed = snd_hum1_base_speed;
 
   // rotation hum and pitch-bend
   rv = rotation_history;
@@ -233,24 +184,32 @@ n = analogRead(A0);
   }
   snd_hum2_volume = value_delta(snd_hum2_volume, delta, 0, 255);
 
-  snd_hum1_speed = snd_hum1_base_freq + (rotation_history / snd_hum2_doppler);
-  snd_hum2_speed = snd_hum2_freq + (rotation_history / snd_hum2_doppler);
-    // Serial.print(rotation_history);
+  // Serial.println(rotation_history);
+  snd_hum1_speed = snd_hum1_base_speed + (rotation_history / snd_hum2_doppler);
+  snd_hum2_speed = snd_hum2_base_speed + (rotation_history / snd_hum2_doppler);
+
+
+  // Serial.print(rotation_history);
   // Serial.print(" ");
   // Serial.print(snd_hum1_speed);
   // Serial.print(" ");
   // Serial.print(rotation_history);
   // Serial.print(" ");
   // Serial.println(rotation_history);
-  
-  // Serial.print(snd_hum1_speed);
+  // Serial.print(snd_buzz_speed);
   // Serial.print(" ");
   // Serial.print(snd_hum1_speed);
   // Serial.print(" ");
   // Serial.print(snd_hum2_speed);
   // Serial.print(" ");
-  // Serial.println(snd_hum2_speed);
+  // Serial.print(snd_buzz_volume);
+  // Serial.print(" ");
+  // Serial.print(snd_hum1_volume);
+  // Serial.print(" ");
+  // Serial.println(snd_hum2_volume);
   // turn velocity into volume modifications
+
+
   av = velocity_factor;
   if (av > 1.0) av = 1.0;
   snd_buzz_volume = 8 + (int)(av * 32.0);
@@ -258,28 +217,32 @@ n = analogRead(A0);
   snd_hum1_volume = 12 + (int)(av * 40.0);
   snd_hum1_volume = max(((unsigned int)snd_hum1_volume * (unsigned int)global_volume) / 256, snd_hum2_volume);
 
- unsigned int v1 = snd_buzz_volume; //v1 *= global_volume; v1 = v1 >> 8;
-  unsigned int v2 = snd_hum1_volume; //v2 *= global_volume; v2 = v2 >> 8;
-  unsigned int v3 = snd_hum2_volume; //v3 *= global_volume; v3 = v3 >> 8;
+  //// DEBUG ///////////////////////////////////////////////////////////////
+//   unsigned int v1 = snd_buzz_volume;
+//    v1 *= 10;  //v1 = v1 >> 8;
+//   unsigned int v2 = snd_hum1_volume;
+//    v2 *= 10;  //v2 = v2 >> 8;
+//   unsigned int v3 = snd_hum2_volume;
+//    v3 *= 10;  //v3 = v3 >> 8;
+//   // sample our primary waveforms, and multiply by their master volumes
+//   int s1 = (sound_sample(&snd_index_1, buzz_wave, snd_buzz_speed, BUZZ_WAVE_LENGTH) - 128) * v1;
+//   int s2 = (sound_sample(&snd_index_2, hum1_wave, snd_hum1_speed, HUM1_WAVE_LENGTH) - 128) * v2;
+//   int s3 = (sound_sample(&snd_index_3, hum2_wave, snd_hum2_speed, HUM2_WAVE_LENGTH) - 128) * v3;
+//  unsigned int sample = 0x8000 + s1 + s2 + s3;
 
-  int s1 = ( sound_sample(&snd_index_1, buzz_wave, snd_buzz_speed, BUZZ_WAVE_LENGTH ) - 128) * v1;
-  int s2 = ( sound_sample(&snd_index_2, hum1_wave, snd_hum1_speed, HUM1_WAVE_LENGTH) - 128) * v2;
-  int s3 = ( sound_sample(&snd_index_3, hum2_wave, snd_hum2_speed, HUM2_WAVE_LENGTH) - 128) * v3;
+//   int test  = (sample >> 9) ;
+  // //sample = ((sample >> 8) & 0xff -120) *2+ 100 ;
 
-  unsigned int sample = 0x8000 + s1 + s2 + s3;
+//   // Serial.print("HERE2\t ");
+//   // Serial.print(s1);
+//   // Serial.print("\t");
+//   // Serial.print(s2);
+//   // Serial.print("\t");
+//   // Serial.print(s3);
+//   // Serial.print("\t");
 
-  sample = (sample >> 8) & 0xff;
-
-  Serial.print("HERE2\t ");
-  Serial.print(s1);
-  Serial.print("\t");
-  Serial.print(s2);
-  Serial.print("\t");
-    Serial.print(s3);
-  Serial.print("\t");
-  
-  Serial.println(sample);
-
+    // Serial.println(test);
+  //// DEBUG ///////////////////////////////////////////////////////////////
   // active
   // Serial.print(velocity_factor); Serial.print(' ');
   // Serial.println(rotation_history);
@@ -364,4 +327,127 @@ inline void motionEngine() {
     // display quaternion values in easy matrix form: w x y z
     // printQuaternion(curRotation);
   }
+}
+
+
+
+
+// i2c utility functions
+bool write_packet(byte device, int address, int data) {
+  Wire.beginTransmission(device);
+  Wire.write(address);
+  Wire.write(data);
+  Wire.endTransmission();
+  return true;
+}
+
+bool read_packet(byte device, byte address, byte *buffer, byte length) {
+  // send phase
+  Wire.beginTransmission(device);
+  Wire.write(address);
+  Wire.endTransmission();
+  // recieve phase
+  Wire.beginTransmission(device);
+  Wire.requestFrom(device, (uint8_t)length);
+  // how many did we get?
+  byte r = Wire.available();
+  if (r <= length) {
+    for (byte i = 0; i < r; i++) {
+      buffer[i] = Wire.read();
+      // Serial.print("."); Serial.print(buffer[i]);
+    }
+  } else {
+    // consume unexpected bytes
+    for (byte i = 0; i < length; i++) { Wire.read(); }  //  { Serial.print("!"); Serial.print(Wire.read()); }
+  }
+  Wire.endTransmission();
+  // if(r < length) { Serial.print(" packet too short! "); Serial.print(r); }
+  // if(r > length) { Serial.print(" packet too long! "); Serial.print(r); }
+  return (r == length);
+}
+
+/*
+ * MPU6040 Accellerometer + Gyro
+ * 
+ */
+static const byte I2C_MPU6050 = 0x68;  // i2c device address
+// public properties
+void MPU6050_start() {
+  // reset
+  write_packet(I2C_MPU6050, 0x6B, 0x80);  //
+  delay(50);
+  // configuration
+  write_packet(I2C_MPU6050, 0x19, 0x01);  // Sample Rate
+  write_packet(I2C_MPU6050, 0x6B, 0x03);  // Z-Axis gyro reference used for improved stability (X or Y is fine too)
+  delay(30);
+  write_packet(I2C_MPU6050, 0x1B, 0x18);  // Gyro Configuration FS_SEL = 3
+  delay(30);
+  write_packet(I2C_MPU6050, 0x1C, 0b11101000);  // Accel Configuration AFS_SEL = 1
+  delay(20);
+}
+
+void MPU6050_stop() {
+}
+
+bool MPU6050_get_vector(byte reg, int *v) {
+  byte buffer[6];
+  if (read_packet(I2C_MPU6050, reg, buffer, 6)) {
+    // [todo: bit shuffling might not be necessary - try just dumping directly into the vector]
+    v[0] = (buffer[0] << 8) | buffer[1];
+    v[1] = (buffer[2] << 8) | buffer[3];
+    v[2] = (buffer[4] << 8) | buffer[5];
+    return true;
+  } else {
+    return false;
+  }
+}
+
+bool MPU6050_gyro_vector(int *v) {
+  return MPU6050_get_vector(0x43, v);
+}
+
+bool MPU6050_accel_vector(int *v) {
+  return MPU6050_get_vector(0x3B, v);
+}
+
+bool MPU6050_temp_vector(int *v) {
+  byte buffer[2];
+  if (read_packet(I2C_MPU6050, 0x41, buffer, 2)) {
+    // [todo: bit shuffling might not be necessary - try just dumping directly into the vector]
+    v[0] = (buffer[0] << 8) | buffer[1];
+    return true;
+  } else {
+    return false;
+  }
+}
+
+bool MPU6050_get_ident() {
+  byte buffer[3];
+  // [todo: might not be necessary - try just dumping directly into the vector]
+  return read_packet(I2C_MPU6050, 0x75, buffer, 1) && (buffer[0] == 0x68);
+}
+
+
+
+void int3_add(int *v, int *a) {
+  for (int i = 0; i < 3; i++) v[i] += a[i];
+}
+
+void int3_sub(int *v, int *a) {
+  for (int i = 0; i < 3; i++) v[i] -= a[i];
+}
+
+void int3_print(int *v) {
+  for (int i = 0; i < 3; i++) {
+    Serial.print(v[i]);
+    Serial.print(' ');
+  }
+  Serial.println();
+}
+void vec3_print(float *v) {
+  for (int i = 0; i < 3; i++) {
+    Serial.print(v[i]);
+    Serial.print(' ');
+  }
+  Serial.println();
 }

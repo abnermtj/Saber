@@ -1,6 +1,7 @@
 #include "Arduino.h"
 #include "SoftwareSerial.h"
 #include "DFMiniMp3.h"
+#include "Led.h"
 #include <MPU6050_6Axis_MotionApps20.h>
 #include "NonBlockingDelay.h"
 #include <Adafruit_NeoPixel.h>
@@ -12,6 +13,7 @@
 #define MP3_RX_PIN 10
 #define MP3_TX_PIN 11
 #define MPU_INTERRUPT_PIN 2
+#define BUTTON_PIN A7
 
 // ---------------------------- MP3 -------------------------------
 #define GENERAL_SOUND_FOLDER 1
@@ -37,10 +39,6 @@ class Mp3Notify;
 SoftwareSerial softSerial(MP3_RX_PIN, MP3_TX_PIN);  // RXpin, TXpin
 typedef DFMiniMp3<SoftwareSerial, Mp3Notify> DfMp3;
 DfMp3 myDFPlayer(softSerial);
-
-// // typedef DFMiniMp3<Serial, Mp3Notify> DfMp3;
-// DFMiniMp3<Serial, Mp3Notify> myDFPlayer(Serial);
-
 
 float curVolume = 0;
 uint8_t prevVolume = 0;
@@ -75,23 +73,25 @@ I2Cdev i2ccomm;
 
 // ---------------------------- SETTINGS -------------------------------
 // #define DEBUG 1
-#define VOLUME 16  // From 0 to 30
+#define VOLUME 25  // From 0 to 30
 #define MIN_SWING_VOLUME 18
 #define MAX_SWING_VOLUME 29
 #define NUM_PIXELS 144
-#define ACC_SWING_THRESHOLD 3000 // 1000 for smooth swing sensitvit
-#define GYR_SLOW_SWING_THRESHOLD 9000 // TODO update this
+#define ACC_SWING_THRESHOLD 4000       // 1000 for smooth swing sensitvit
+#define GYR_SLOW_SWING_THRESHOLD 9000  // TODO update this
 #define SWING_TIMEOUT_MS 500
 #define RESWING_TIMEOUT_MS 250
 #define VOLUME_LERP 0.043
-#define CLASH_THRESHOLD 10
+#define CLASH_THRESHOLD 15
 
 // ---------------------------- FSM STATES -------------------------------
 #define START_STATE 0
 #define OFF_STATE 1
-#define IDLE_STATE 2
-#define SWING_STATE 3
-#define CLASH_STATE 4
+#define IGNITE_STATE 2
+#define RETRACT_STATE 3
+#define IDLE_STATE 4
+#define SWING_STATE 5
+#define CLASH_STATE 6
 
 #define SWING_STATE_TIME_MS 800
 #define CLASH_STATE_TIME_MS 900
@@ -113,8 +113,8 @@ public:
   virtual void run() {}
 };
 
-State* curState;
-State* nextState;
+volatile State* curState;
+volatile State* nextState;
 bool resetSaber = false;
 volatile bool isSoundDone = false;
 
@@ -178,9 +178,11 @@ public:
   ClashState()
     : State(CLASH_STATE) {}
   void init() override {
+    myDFPlayer.playAdvertisement(1510);
     Serial.println("State: Clash");
-    myDFPlayer.setRepeatPlayCurrentTrack(false);
-    myDFPlayer.playFolderTrack(CLASH_SOUND_FOLDER,random(1, 1 + NUM_CLASH_SOUND));
+    // myDFPlayer.setRepeatPlayCurrentTrack(false);
+    // myDFPlayer.playAdvertisement(1510);
+    // myDFPlayer.playFolderTrack(CLASH_SOUND_FOLDER,random(1, 1 + NUM_CLASH_SOUND));
     isSoundDone = false;
     clashStartTime = millis();
   }
@@ -198,7 +200,6 @@ public:
 
 void ISR_MPUInterrupt() {
   Serial.println("CLASH detected");
-  
   nextState = &clashState;
 }
 
@@ -244,7 +245,6 @@ public:
     initialSwingDirY = sign(curGyro.z);
     swingStartTime = millis();
     hasSwingingStopped = false;
-
   }
   void run() override {
     // Check is reswing in different direction
@@ -416,13 +416,14 @@ public:
 
     resetSaber = false;
     goalVolume = VOLUME;
-    
+
     myDFPlayer.playFolderTrack(GENERAL_SOUND_FOLDER, HUM_SOUND);
-    
   }
 
   void run() override {
-    if (checkSwing(false)) {
+    if (isButtonPressed()) {
+      retractSaber();
+    } else if (nextState != &clashState && checkSwing(false)) {
       nextState = &swingState;
       isSoundDone = false;
     }
@@ -430,12 +431,46 @@ public:
 } idleState;
 
 void igniteSaber() {
-  myDFPlayer.setVolume(0);  // DEBUG
-  curVolume = 0;            // DEBUG
-  goalVolume = 0;           // DEBUG
+  // myDFPlayer.setVolume(0);  // DEBUG
+  curVolume = 0;   // DEBUG
+  goalVolume = 0;  // DEBUG
   myDFPlayer.setRepeatPlayCurrentTrack(false);
   myDFPlayer.playFolderTrack(IGNITE_SOUND_FOLDER, random(1, NUM_IGNITE_SOUND + 1));
+  IgniteLED(strip.Color(50, 0, 0), 0.000002, strip.Color(255, 255, 255), 0, 50);
 }
+
+
+bool isButtonPressed() {
+  int buttonVal = analogRead(BUTTON_PIN);
+  // Serial.println(buttonVal);
+  if (buttonVal > 700) {
+    return true;
+  }
+
+  return false;
+}
+
+
+class IgniteState : public State {
+public:
+  IgniteState()
+    : State(IGNITE_STATE) {}
+
+  void init() override {
+    Serial.println("State: Ignite");
+  }
+
+  void run() override {
+    // if (isSoundDone) {
+    delay(1000);  //debug
+
+    myDFPlayer.setRepeatPlayCurrentTrack(true);
+    nextState = &idleState;
+    isSoundDone = false;
+    // breatheLED(80,60,3,1); 
+    // }
+  }
+} igniteState;
 
 class OffState : public State {
 public:
@@ -446,15 +481,12 @@ public:
     // TODO Create a power saving mode when "off"
     // TODO ignite only if button pressed
     Serial.println("State: OFF");
-    igniteSaber();
   }
 
   void run() override {
-    if (isSoundDone) {
-      myDFPlayer.setRepeatPlayCurrentTrack(true);
-      nextState = &idleState;
-      isSoundDone = false;
-      
+    if (isButtonPressed()) {
+      igniteSaber();
+      nextState = &igniteState;
     }
   }
 } offState;
@@ -473,11 +505,36 @@ public:
 } startState;
 
 
+class RetractState : public State {
+public:
+  RetractState()
+    : State(IGNITE_STATE) {}
+
+  void init() override {
+    Serial.println("State: Retract");
+  }
+
+  void run() override {
+    // if (isSoundDone) {
+    delay(1000);  //debug
+
+    myDFPlayer.setRepeatPlayCurrentTrack(true);
+    nextState = &offState;
+    isSoundDone = false;
+    // }
+  }
+} retractState;
+
+void retractSaber() {
+  RetractLED(0.00001);
+  nextState = &retractState;
+}
+
 void updateVolume() {
   if (curVolume < goalVolume) {  // Increasing volume
     curVolume = goalVolume * VOLUME_LERP + curVolume * (1 - VOLUME_LERP);
-  } else {  // Decreasing volume
-    curVolume = goalVolume * VOLUME_LERP * 2 + curVolume * (1 - VOLUME_LERP * 2); // Fast to go silent to taper swings
+  } else {                                                                         // Decreasing volume
+    curVolume = goalVolume * VOLUME_LERP * 2 + curVolume * (1 - VOLUME_LERP * 2);  // Fast to go silent to taper swings
   }
 
   if (int(curVolume) != prevVolume) {
@@ -485,12 +542,11 @@ void updateVolume() {
     myDFPlayer.setVolume((int)curVolume);
     prevVolume = curVolume;
   }
-  
 }
 
 void loop() {
 #ifdef DEBUG
-  Serial.println(millis() - loopcurrenttime);
+  // Serial.println(millis() - loopcurrenttime);
   loopcurrenttime = millis();
 #endif
 
@@ -512,16 +568,6 @@ void loop() {
 void setupStates() {
   curState = &startState;
   nextState = &offState;
-}
-
-// TODO Implement
-void setupLED() {
-
-  // for (int i = NUM_PIXELS; i > -1; i--)
-  // {
-  //   pixels.setPixelColor(i, pixels.Color(0, 0, 0));
-  //   pixels.show();
-  // }
 }
 
 void setupIMU() {

@@ -3,7 +3,7 @@
   #include <avr/power.h>
 #endif
 
-#define PIN 6
+#define PIN 5
 
 //lead with white tip then at the top become fully red
 
@@ -37,8 +37,12 @@ void setup() {
 
 void loop() {
   // Some example procedures showing how to display to the pixels:
-  Ignition(strip.Color(255, 0, 0), 3,strip.Color(255,255,255),0,50); // Red
-  breathe(255,100, 0.5,0.5,strip.Color(255,255,255),strip.Color(255,0,0));//Fade stuff #Maximum bightness is 255-50 so it adds up to 255
+    IgnitionNew1(strip.Color(50, 0, 0), 0.000002,strip.Color(255,255,255),0,50); // Red
+    // IgnitionNew1(strip.Color(255, 0, 0), 0.000002,strip.Color(255,255,255),0,50);
+    // IgnitionNew1(strip.Color(0, 0, 255), 0.000002,strip.Color(255,255,255),0,50);
+  
+    //breathe(255,50,3,1);//Fade stuff #Maximum bightness is 255-50 so it adds up to 255
+  retraction(0.00001);
   //colorWipe(strip.Color(0, 255, 0), 3); // Green
   //colorWipe(strip.Color(0, 0, 255), 3); // Blue
 // //colorWipe(strip.Color(0, 0, 0, 255), 50); // White RGBW
@@ -47,7 +51,7 @@ void loop() {
 //   theaterChase(strip.Color(127, 0, 0), 50); // Red
 //   theaterChase(strip.Color(0, 0, 127), 50); // Blue
 
-  // rainbow(20);
+  //rainbow(20);
    //rainbowCycle(20);
 //   theaterChaseRainbow(50);
 }
@@ -61,21 +65,17 @@ void colorWipe(uint32_t c, uint8_t wait) {
   }
 }
 
-void breathe(float MaximumBrightness,float MinimumBrightness, float SpeedFactor, float StepDelay,uint32_t tipcolor, uint32_t color)
+void breathe(float MaximumBrightness,float MinimumBrightness, float SpeedFactor, float StepDelay)
 {
   // Make the lights breathe
-  for (int i = 0; i < 6000; i++) {
+  for (int i = 0; i < 65535; i++) {
     // Intensity will go from 10 - MaximumBrightness in a "breathing" manner
     float intensity = MaximumBrightness /2.0 * (1.0 + sin(SpeedFactor * i)) + MinimumBrightness;
-    intensity = constrain(intensity,0,255);
+    intensity = constrain(intensity,0,255)   ; 
     strip.setBrightness(intensity);
     // Now set every LED to that color
     for (int ledNumber=0; ledNumber<=144; ledNumber++) {
-      strip.setPixelColor(ledNumber, color); //Color we wanna set
-        if (ledNumber >= 139){
-          strip.setPixelColor(ledNumber,tipcolor);
-          strip.show();
-        }
+      strip.setPixelColor(ledNumber, 255, 0, 0);
     }
 
     strip.show();
@@ -86,38 +86,43 @@ void breathe(float MaximumBrightness,float MinimumBrightness, float SpeedFactor,
 
 
 
-//transition type how fast it lits
-void Ignition(uint32_t color, uint8_t duration, uint32_t tipcolor, uint8_t transitiontype,uint32_t transitionduration) {    
-  for(uint16_t pixelposition=0; pixelposition<strip.numPixels(); pixelposition++) {
-    if (transitiontype == 0){
-      strip.setPixelColor(pixelposition, color);
-        if (pixelposition >= 139){
-          strip.setPixelColor(pixelposition,tipcolor);
-          strip.show();
-        }
-      
+
+void IgnitionNew1(uint32_t color, uint8_t duration, uint32_t tipcolor, uint8_t transitiontype,uint32_t transitionduration) { //Working
+  uint16_t j,led;
+  (led = 0);
+  static bool ongoing = true;
+  while (ongoing){
+    for (j=0; j<=147;j++){ //147 is 144 + 6 which is the belwo j>6
+      //Serial.print(j);
+      if (j<=3);
+        strip.setPixelColor(j,tipcolor);        
+        strip.show();
+        delay(duration);
+      //delay(duration);
+      if (j>3){
+        strip.setPixelColor(led,color);
       strip.show();
       delay(duration);
-      
-    }
-    else if (transitiontype == 1){
-      strip.setPixelColor(pixelposition, color);
-          if (pixelposition >= 139){ //138 is the led shit
-          strip.setPixelColor(pixelposition,tipcolor);
-          strip.show();
-        }
-      strip.show();
-      delay(transitionduration);
-    }
-    
-
-  }  
+      led++;
+        } 
+      }
+    ongoing = false;
+    strip.setPixelColor(led,color);
+    strip.show();
+    delay(duration);
+  }
 }
 
 
 
-
-
+void retraction(uint8_t duration){
+  for(uint16_t pixelposition=0; pixelposition<strip.numPixels(); pixelposition++) {
+    strip.setPixelColor(144-pixelposition,0);
+    strip.show();
+    delay(duration);
+  }
+}  
+              
 
 
 

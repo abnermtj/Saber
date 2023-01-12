@@ -1,3 +1,9 @@
+//#define AUDIO_9BIT
+#define AUDIO_8BIT
+//#define AUDIO_7BIT
+//#define AUDIO_6BIT
+//#define AUDIO_4BIT
+
 // audio properties
 int snd_buzz_speed = 47;
 int snd_hum1_speed = 50;
@@ -6,13 +12,6 @@ int snd_hum2_speed = 52;
 byte snd_buzz_volume = 0;
 byte snd_hum1_volume = 0;
 byte snd_hum2_volume = 0;
-
-/*
-int snd_tap1_delay1 = 32; int snd_tap1_delay2 = snd_tap1_delay1/2;
-int snd_tap2_delay1 = 40; int snd_tap2_delay2 = snd_tap1_delay2/2;
-int snd_tap1_volume = 2;
-int snd_tap2_volume = 2;
-*/
 
 // sound fonts
 #define BUZZ_WAVE_LENGTH 205
@@ -70,118 +69,106 @@ byte hum2_wave[HUM2_WAVE_LENGTH] = {
 };
 
 
-byte sound_sample(int * index, byte * wave, int wave_speed, byte wave_length) {
+inline byte sound_sample(int * index, byte * wave, int wave_speed, byte wave_length) {
   // interpolate next sample
   int i = *index;
+// /* DEBUG*/
+  
+//   i += wave_speed;
+//   i = i % wave_length;
+// return wave[i];
+
+
+
   byte si1 = (i >> 8); // first sample index
-  byte si2 = si1 + 1; if(si2==wave_length) { si2 = 0; } // wrap next sample index
+  byte si2 = (si1 + 1) %  wave_length;
+
   int sj1 = i & 255; // sample sub-index
   int sj2 = 256-sj1; // 
+
   // mix the two sample values
   unsigned int s1 = wave[si1]; s1 *= sj2;
   unsigned int s2 = wave[si2]; s2 *= sj1;
   unsigned int sample = s1 + s2;
+
   // increment index, wrap at limit
   i += wave_speed;
   unsigned int index_limit = wave_length << 8;
   if(i >= index_limit) i -= index_limit;
   *index = i;
+
   // return the top byte
   return sample / 256;
 }
-
-/*
-// sound ring buffer (record our own output for echo/harmonic effects)
-byte sound_ring[1024];
-unsigned int sound_ring_index = 0;
-
-inline int sound_ring_sample(int ago) {
-  unsigned int i = (sound_ring_index - ago ) & 0x03ff;
-  return sound_ring[i];
-}
-*/
 
 // sound generators
 int snd_index_1 = 0;
 int snd_index_2 = 0;
 int snd_index_3 = 0;
 
-ISR(TIMER1_COMPA_vect) { // If OCR0A = 255 then this runs at  ~60 KHz
-  //digitalWrite(8,HIGH);
+// If OCR0A = 255 then this ISR runs at  ~60 KHz
+ISR(TIMER1_COMPA_vect) { 
   // combine the wave and global volume into channel volumes
-  unsigned int v1 = snd_buzz_volume; //v1 *= global_volume; v1 = v1 >> 8;
-  unsigned int v2 = snd_hum1_volume; //v2 *= global_volume; v2 = v2 >> 8;
-  unsigned int v3 = snd_hum2_volume; //v3 *= global_volume; v3 = v3 >> 8;
+  unsigned int v1 = snd_buzz_volume; v1 *= 256; //v1 = v1 >> 8;
+  unsigned int v2 = snd_hum1_volume;v2 *= 256; //v2 = v2 >> 8;
+  unsigned int v3 = snd_hum2_volume; v3 *= 256; //v3 = v3 >> 8;
   // sample our primary waveforms, and multiply by their master volumes
   int s1 = ( sound_sample(&snd_index_1, buzz_wave, snd_buzz_speed, BUZZ_WAVE_LENGTH ) - 128) * v1;
   int s2 = ( sound_sample(&snd_index_2, hum1_wave, snd_hum1_speed, HUM1_WAVE_LENGTH) - 128) * v2;
   int s3 = ( sound_sample(&snd_index_3, hum2_wave, snd_hum2_speed, HUM2_WAVE_LENGTH) - 128) * v3;
 
   unsigned int sample = 0x8000 + s1 + s2 + s3;
-
-  OCR0B =   (sample >> 8) & 0xff -128;
+#ifdef AUDIO_9BIT
+  OCR0B = (sample >> 7) & 0x1ff;
+#endif
+#ifdef AUDIO_8BIT
+  OCR0B = (sample >> 9) & 0xff;
+#endif
+#ifdef AUDIO_7BIT
+  OCR0B = (sample >> 9) & 0x7f;
+#endif
+#ifdef AUDIO_6BIT
+  OCR0B = (sample >> 10) & 0x3f;
+#endif
+#ifdef AUDIO_4BIT
+  OCR0B = (sample >> 12) & 0x0f;
+#endif
 }
  
-void enable_intr(){
-}
-
 void snd_init() {
   pinMode(5, OUTPUT);
-  /*
-  // init the internal PLL
-  PLLFRQ = _BV(PDIV2);
-  PLLCSR = _BV(PLLE);
-  while(!(PLLCSR & _BV(PLOCK)));
-  PLLFRQ |= _BV(PLLTM0); // PCK 48MHz
-  */
-
-  // setup timer4 
-  // TCCR4A = (1<<PWM4B) | (0<<COM4B1) | (1<<COM4B0);   // Cleared on Compare Match. Set when TCNT4 = 0x000
-  // enables PWM mode based on comparator OCR4B (PWM4B). 
-  /* TCCR4B = (0<<CS43) | (0<<CS42) | (0<<CS41) | (1<<CS40); // No prescaling for timer  
-  // TCCR4E = (1<<ENHC4); // : Enhanced Compare/PWM Mode
-  // // TCCR4D = (1<<WGM40); //set it to phase and frequency correct mode    
-  // TCCR4D = (0<<WGM41) | (0<<WGM40); // Timer/Counter4 fast PWM mode (TOP ICR4C)  */
-
-
-
-
-  
-  
-  // setup timer2 which is connected to pin digital pin 10 (PWM)  Pins 11 and 3:
-     TCNT0 = 0;
-  TCCR0A = (1<<COM0B1) | (0<<COM0B0)  // Clear OC0B on Compare Match, set OC0B at BOTTOM, (non-inverting mode) 
-  | (1<<WGM01) | (1<<WGM00);  // Timer/Counter4 fast PWM mode (WGM22) where TOP = OCRA  ) should this top source be OCR2A?
-
-  TCCR0B =(1 << WGM02 | 0<<CS02) | (0<<CS01) | (1<<CS00); // No prescaling for timer  
-
-  //In fast PWM mode, the counter counts up to its max value and then resets to 0. The output at the output pin ( OC0 pin in case of atmega16 and Timer0 ) toggles everytime the timer value equals the value of the OCR register.
-
-  
-    // TCCR0A = 0b10000  111;
-    // TCCR0B = 0b00000011;
-
-  OCR0A = 255; // timer max Ouput compare flag OCF4C will be set on match  WAIT VERIFY THIS pg 138
-
-  //Atmega328P 
-  // Timer/cou  ter 0 - 8 bit (255)
+  // Atmega328P 
+  // Timer/counter 0 - 8 bit (255)
   // Timer/counter 1 - 16 bit (65,535)
   // Timer/counter 2 - 8 bit (255)
 
+  // setup timer0 (pin 5 or 6):
+  TCNT0 = 0;
+  TCCR0A = (1<<COM0B1) | (0<<COM0B0)  // Clear OC0B on Compare Match, set OC0B at BOTTOM, (non-inverting mode) 
+  | (1<<WGM01) | (1<<WGM00);  // Timer/Counter4 fast PWM mode (WGM22) where TOP = OCRA  ) should this top source be OCR2A?
+  TCCR0B =(1 << WGM02 | 0<<CS02) | (0<<CS01) | (1<<CS00); // No prescaling for timer  
+
+  // TOP  pg 138 Essentially dictates the quantization of volume.
+#ifdef AUDIO_9BIT
+  OCR0A = 255; // timer max
+#endif
+#ifdef AUDIO_8BIT
+  OCR0A = 128; // timer max
+#endif
+#ifdef AUDIO_7BIT
+  OCR0A = 64; // timer max
+#endif
+#ifdef AUDIO_6BIT
+  OCR0A = 32; // timer max
+#endif
+#ifdef AUDIO_4BIT
+  OCR0A = 8; // timer max
+#endif
+
+
   // setup timer 1 Pins 9 and 10
-  TCCR1A = (0<<WGM11) | (0<<WGM10);
-  TCCR1B = (0<<WGM13) | (1<<WGM12) | (0<<CS12) | (0<<CS11) | (1<<CS10); //CTC 9-bit + No prescaling for timer   (pg172 data sheet)
-  OCR1A = 1024; // 1 * 1024;
-  TIMSK1 |= (1<<OCIE1A); // enable output compare match interrupt which calls ISR pg 184
-  
-  
+  TCCR1A = (1<<WGM11) | (0<<WGM10);
+  TCCR1B = (0<<WGM12) | (0<<CS12) | (0<<CS11) | (1<<CS10); //CTC 9-bit + No prescaling for timer   (pg172 data sheet)
+  OCR1A = 4096;  // timer 1 is 16 bit, max = 65535 Essentially how frequent we change the tone.
+  TIMSK1 |= (1<<OCIE1A); // enable output compare match interrupt which calls ISR pg 184  
 } 
-
-// void snd_signal(unsigned int sample) {    
-//    OCR4D = (sample) & 127; 
-// }
- 
-// void snd_stop()  {
-//   TCCR4A &= ~(_BV(COM4D1));
-// }
-

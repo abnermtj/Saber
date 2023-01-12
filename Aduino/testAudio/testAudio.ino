@@ -3,8 +3,8 @@
 #include "DFMiniMp3.h"
 
 // ---------------------------- PINOUT -------------------------------
-#define MP3_RX_PIN 10
-#define MP3_TX_PIN 11
+#define MP3_RX_PIN 11
+#define MP3_TX_PIN 10
 
 class Mp3Notify;
 SoftwareSerial softSerial(MP3_RX_PIN, MP3_TX_PIN);  // RXpin, TXpin
@@ -61,7 +61,7 @@ void setup() {
   
   myDFPlayer.setRepeatPlayCurrentTrack(false);
   myDFPlayer.setVolume(25);  //Set volume value. From 0 to 30
-  myDFPlayer.playFolderTrack(1, 4);
+  myDFPlayer.playRandomTrackFromAll();
 Serial.println(F("DFPlayer Mini online."));
 }
 
@@ -70,20 +70,10 @@ int volume = 15;
 void loop() {
   myDFPlayer.loop();
   static unsigned long timer = millis();
-  // Serial.println(volume);
-  // if (millis() - timer > 100) {
-  //   timer = millis();
-  //   volume += dir;
 
-  //   if (volume > 30) {
-  //     volume = 30;
-  //     dir = -1;
-  //   }
-  //   if (volume < 15) {
-  //     volume = 15;
-  //     dir = 1;
-  //   }
-  //   myDFPlayer.setVolume(volume);
-  // }
+  if (millis() - timer > 2000) {
+    timer = millis();
+   myDFPlayer.playRandomTrackFromAll();
+  }
 
 }
