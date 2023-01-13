@@ -1,7 +1,0 @@
-In audicity
-8k project rate ( So sound changes every 8k samples)
-Format> 16-bit PCM
-
-Save as MP3
-
-D11 will play the sound
