@@ -110,6 +110,7 @@ void SB_Motion(const Vec3 &raw_gyro, bool clear) {
         float swing_strength = min(1.0f, speed / SwingSensitivity);
 
         A.rotate(-speed * delta / 1000000.0);  // This shifts the midpoint of the swing, it accumulates.
+        // Reache the midpoint of the swing here
         // If the current transition is done, switch A & B,
         // and set the next transition to be 180 degrees from the one
         // that is done.
@@ -167,7 +168,7 @@ void SB_Motion(const Vec3 &raw_gyro, bool clear) {
       state_ = SwingState::OUT;
 
     case SwingState::OUT:
-     // PickRandomSwing();
+      PickRandomSwing();
       state_ = SwingState::OFF;
   }
   // Must always set hum volume, or fade-out doesn't work.

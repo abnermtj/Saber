@@ -2,8 +2,8 @@
 #include "smooth_swing_v2.h"
 
 #define AUDIO_PIN D7
-#define VOLUME 7 
-int i, i2, i3;       //sample play progress
+#define VOLUME 1
+long i, i2, i3;       //sample play progress
 int audioSpeed = 1;  //sample frequency
 bool startAudio, prevStartAudio, done_trig1;
 int sound_out;  //sound out PWM rate
@@ -51,19 +51,26 @@ void IRAM_ATTR onTimer() {
 
 
 
-    int lswingArrSize = sizeof(lowSwingSound) / sizeof(lowSwingSound[0]);
+     int lswingArrSize = sizeof(lowSwingSound) / sizeof(lowSwingSound[0]);
     int hswingArrSize = sizeof(highSwingSound) / sizeof(highSwingSound[0]);
     int humArrSize = sizeof(humSound) / sizeof(humSound[0]);
 
-    i = (i + audioSpeed) % lswingArrSize;
-    i2 = (i2 + audioSpeed) % hswingArrSize;
-    i3 = (i3 + audioSpeed) % humArrSize;
+    i = (i + audioSpeed) % (lswingArrSize/ 2 - 1);
+    i2 = (i2 + audioSpeed) % (hswingArrSize/ 2 - 1);
+    i3 = (i3 + audioSpeed) % (humArrSize / 2 - 1) ;
 
-    int lswingSample = (((pgm_read_byte(&(lowSwingSound[(int)i * 2]))) | (pgm_read_byte(&(lowSwingSound[(int)i * 2 + 1]))) << 8) >> 6);      //16bit to 10bit
-    int hswingSample = (((pgm_read_byte(&(highSwingSound[(int)i2 * 2]))) | (pgm_read_byte(&(highSwingSound[(int)i2 * 2 + 1]))) << 8) >> 6);  //16bit to 10bit
+     int lswingSample = (((pgm_read_byte(&(lowSwingSound[(int)i * 2]))) | (pgm_read_byte(&(lowSwingSound[(int)i * 2 + 1]))) << 8) >> 6);      //16bit to 10bit
+     int hswingSample = (((pgm_read_byte(&(highSwingSound[(int)i2 * 2]))) | (pgm_read_byte(&(highSwingSound[(int)i2 * 2 + 1]))) << 8) >> 6);  //16bit to 10bit
     int humSample = (((pgm_read_byte(&(humSound[(int)i3 * 2]))) | (pgm_read_byte(&(humSound[(int)i3 * 2 + 1]))) << 8) >> 6);                 //16bit to 10bit
 
-    sound_out = (lswingSample * lswingVolume + hswingSample * hswingVolume + humSample * humVolume )* VOLUME;
+    // int swap = humSample;
+    // humSample = lswingSample;
+    // lswingSample = swap;
+    
+    // lswingSample = 0;
+    // hswingSample = 0;
+    sound_out = (lswingSample * lswingVolume + hswingSample * hswingVolume + humSample * humVolume  ) / 10;
+    //sound_out = humSample * humVolume;
     ledcWrite(1, sound_out + 511);  //PWM output first arg is the channel attached via ledcAttachPin()
   }
 
@@ -110,13 +117,6 @@ void setupIMU() {
   Fastwire::setup(400, true);
 #endif
 
-  // initialize serial communication
-  // (115200 chosen because it is required for Teapot Demo output, but it's
-  // really up to you depending on your project)
-  Serial.begin(115200);
-  while (!Serial)
-    ;  // wait for Leonardo enumeration, others continue immediately
-
   // NOTE: 8MHz or slower host processors, like the Teensy @ 3.3V or Arduino
   // Pro Mini running at 3.3V, cannot handle this baud rate reliably due to
   // the baud timing being too misaligned with processor ticks. You must use
@@ -137,19 +137,16 @@ void setupIMU() {
   devStatus = mpu.dmpInitialize();
 
   // supply your own gyro offsets here, scaled for min sensitivity
-  mpu.setXGyroOffset(51);
-  mpu.setYGyroOffset(8);
-  mpu.setZGyroOffset(21);
-  mpu.setXAccelOffset(1150);
-  mpu.setYAccelOffset(-50);
-  mpu.setZAccelOffset(1060);
+ mpu.setXAccelOffset(-3289);
+  mpu.setYAccelOffset(-1392);
+  mpu.setZAccelOffset(516);
+  mpu.setXGyroOffset(240);
+  mpu.setYGyroOffset(9);
+  mpu.setZGyroOffset(27);
+
+
   // make sure it worked (returns 0 if so)
   if (devStatus == 0) {
-    // Calibration Time: generate offsets and calibrate our MPU6050
-    mpu.CalibrateAccel(6);
-    mpu.CalibrateGyro(6);
-    Serial.println();
-    mpu.PrintActiveOffsets();
     // turn on the DMP, now that it's ready
     Serial.println(F("Enabling DMP..."));
     mpu.setDMPEnabled(true);
@@ -180,13 +177,7 @@ void setupIMU() {
 void setup() {
   Serial.begin(115200);
 
-  ledcSetup(1, 39000, 10);      // ledchannel, PWM frequency, resolution
-  ledcAttachPin(AUDIO_PIN, 1);  //(LED_PIN, LEDC_CHANNEL_0);//timer ch1 , apply AUDIO_PIN output
-
-  audioSampleTimer = timerBegin(0, 3628, true);            // begins timer 0, 12.5ns*3628 = 45.35usec(22050 Hz), count-up
-  timerAttachInterrupt(audioSampleTimer, &onTimer, true);  // edge-triggered
-  timerAlarmWrite(audioSampleTimer, 1, true);              // 1*20.83usec = 20.83usec, auto-reload
-  timerAlarmEnable(audioSampleTimer);                      // enable audioSampleTimer
+  setupAudio();
 
   setupIMU();
   SB_Init();
