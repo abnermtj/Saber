@@ -209,4 +209,13 @@ void loop() {
    SB_Motion(raw_gyro_converted, false);
   }
   updateVolume();
+
+  // int choice = 0;
+  // if (Serial.available() != 0) {
+    
+  //   float input= Serial.parseFloat();
+  //   Serial.println(input);
+  //   SwingSensitivity = input;
+  // }
+
 }

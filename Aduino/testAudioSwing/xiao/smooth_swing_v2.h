@@ -1,10 +1,10 @@
 #define SwingStrengthThreshold 80.0f
 #define Transition1Degrees 45.0f
 #define Transition2Degrees 160.0f
-#define SwingSensitivity 2000.0f // Original 450.0f Lower is more sensistive
+float SwingSensitivity = 2000.0f; // Original 450.0f Lower is more sensistive
 #define MaximumHumDucking 75.0f // Orig 75
-#define SwingSharpness .7f // Orig 1.75f
-#define MaxSwingVolume 3.0f // Orig 3.0
+float SwingSharpness = 1.5f; // Orig 1.75f
+float MaxSwingVolume = 3.0f; // Orig 3.0
 
 #include "vec3.h"
 #include "box_filter.h"
@@ -26,8 +26,6 @@ enum class SwingState {
 };
 
 SwingState state_ = SwingState::OFF;
-;
-
 
 
 
@@ -111,13 +109,15 @@ void SB_Motion(const Vec3 &raw_gyro, bool clear) {
       if (speed >= SwingStrengthThreshold * 0.9) {
         float swing_strength = min(1.0f, speed / SwingSensitivity);
 
-        A.rotate(-speed * delta / 5000000.0);  // This shifts the midpoint of the swing, it accumulates.
+        // 50000000 was a good value below
+        A.rotate(-speed * delta / 80000000.0);  // This shifts the midpoint of the swing, it accumulates.
+     // A.rotate(-speed * delta / 1000000.0); // Th
         // original value is 1000000.0
         // Reache the midpoint of the swing here
         // If the current transition is done, switch A & B,
         // and set the next transition to be 180 degrees from the one
         // that is done.
-        if (A.end() < 0.0) {
+        while (A.end() < 0.0) {
           Serial.println("TRANSITION");
           B.midpoint = A.midpoint + 180.0;
           Swap();
