@@ -1,6 +1,6 @@
 #include "Arduino.h"
 #include "SoftwareSerial.h"
-#include "DFMiniMp3.h"
+// #include "DFMiniMp3.h"
 #include "Led.h"
 #include <MPU6050_6Axis_MotionApps20.h>
 #include "NonBlockingDelay.h"
@@ -10,11 +10,13 @@
 #endif
 
 // ---------------------------- PINOUT -------------------------------
-#define MP3_RX_PIN 10
-#define MP3_TX_PIN 11
-#define MPU_INTERRUPT_PIN 2
-#define BUTTON_PIN A7
 
+//#define MP3_RX_PIN 10
+// #define MP3_TX_PIN 11
+#define AUDIO_PIN D7
+#define MPU_INTERRUPT_PIN 6
+#define BUTTON_PIN A0
+#define LED_PIN 4
 // ---------------------------- MP3 -------------------------------
 #define GENERAL_SOUND_FOLDER 1
 #define BOOT_SOUND 1

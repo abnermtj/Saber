@@ -4,10 +4,6 @@
 #include <avr/power.h>
 #endif
 
-#define LED_PIN 4
-
-// lead with white tip then at the top become fully red
-
 // Parameter 1 = number of pixels in strip
 // Parameter 2 = Arduino pin number (most are valid)
 // Parameter 3 = pixel type flags, add together as needed:
