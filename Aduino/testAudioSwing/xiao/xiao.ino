@@ -8,6 +8,9 @@ int audioSpeed = 1;  //sample frequency
 bool startAudio, prevStartAudio, done_trig1;
 int sound_out;  //sound out PWM rate
 
+float actual_lswingVolume = 0;
+float actual_hswingVolume = 0;
+float actual_humVolume = 1;
 
 //-------------------------timer interrupt for sound----------------------------------
 hw_timer_t *audioSampleTimer = NULL;
@@ -48,10 +51,7 @@ void IRAM_ATTR onTimer() {
   portENTER_CRITICAL_ISR(&timerMux0);
 
   if (done_trig1 == 1) {  // Start audio playback
-
-
-
-     int lswingArrSize = sizeof(lowSwingSound) / sizeof(lowSwingSound[0]);
+    int lswingArrSize = sizeof(lowSwingSound) / sizeof(lowSwingSound[0]);
     int hswingArrSize = sizeof(highSwingSound) / sizeof(highSwingSound[0]);
     int humArrSize = sizeof(humSound) / sizeof(humSound[0]);
 
@@ -63,13 +63,15 @@ void IRAM_ATTR onTimer() {
      int hswingSample = (((pgm_read_byte(&(highSwingSound[(int)i2 * 2]))) | (pgm_read_byte(&(highSwingSound[(int)i2 * 2 + 1]))) << 8) >> 6);  //16bit to 10bit
     int humSample = (((pgm_read_byte(&(humSound[(int)i3 * 2]))) | (pgm_read_byte(&(humSound[(int)i3 * 2 + 1]))) << 8) >> 6);                 //16bit to 10bit
 
-    // int swap = humSample;
-    // humSample = lswingSample;
-    // lswingSample = swap;
+
     
     // lswingSample = 0;
     // hswingSample = 0;
-    sound_out = (lswingSample * lswingVolume + hswingSample * hswingVolume + humSample * humVolume  ) / 10;
+    sound_out = (lswingSample * actual_lswingVolume + hswingSample * actual_hswingVolume + humSample * actual_humVolume  ) / 6;
+    sound_out = constrain(sound_out, -511, 511);
+    //sound_out = (lswingSample * lswingVolume + hswingSample * hswingVolume  ) / 6;
+    //Serial.println(sound_out);
+    //sound_out = hswingSample;
     //sound_out = humSample * humVolume;
     ledcWrite(1, sound_out + 511);  //PWM output first arg is the channel attached via ledcAttachPin()
   }
@@ -102,7 +104,7 @@ void setupAudio() {
 
   audioSampleTimer = timerBegin(0, 3628, true);            // begins timer 0, 12.5ns*3628 = 45.35usec(22050 Hz), count-up
   timerAttachInterrupt(audioSampleTimer, &onTimer, true);  // edge-triggered
-  timerAlarmWrite(audioSampleTimer, 1, true);              // 1*20.83usec = 20.83usec, auto-reload
+  timerAlarmWrite(audioSampleTimer, 1, true);              // Counts up to 1 then triggers the interrupt, auto-reload
   timerAlarmEnable(audioSampleTimer);                      // enable audioSampleTimer
 
   Serial.println(F("Audio setup complete"));
@@ -186,17 +188,25 @@ void setup() {
 }
 
 
+#define VOLUME_LERP 1
+void updateVolume() {
+  actual_lswingVolume = lswingVolume * VOLUME_LERP + actual_lswingVolume * (1 - VOLUME_LERP);
+  actual_hswingVolume = hswingVolume * VOLUME_LERP + actual_hswingVolume * (1 - VOLUME_LERP);
+  actual_humVolume = humVolume * VOLUME_LERP + actual_humVolume * (1 - VOLUME_LERP);
+}
+
 void loop() {
   //-------------------------pitch setting----------------------------------
   audioSpeed = 1;
 
-
-   // if programming failed, don't try to do anything
+  // if programming failed, don't try to do anything
   if (!dmpReady) return;
+  
   // read a packet from FIFO
   if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) { // Get the Latest packet 
    mpu.dmpGetGyro(&raw_gyro, fifoBuffer);
+   Vec3 raw_gyro_converted =  Vec3(raw_gyro.x, raw_gyro.y, raw_gyro.z);
+   SB_Motion(raw_gyro_converted, false);
   }
-  Vec3 raw_gyro_converted =  Vec3(raw_gyro.x, raw_gyro.y, raw_gyro.z);
-  SB_Motion(raw_gyro_converted, false);
+  updateVolume();
 }

@@ -16,9 +16,9 @@ function Drop( event ) {
     event.preventDefault();                 // ブラウザデフォルト処理（ページ移動）を阻止
     var f = event.dataTransfer.files[0];    // イベントに格納されたファイルを取り出し
     var code = "<pre><code>"
-    code += "// " + "file name : " + f.name + "\n";
-    code += "// " + "file size : " + f.size + " bytes\n\n";
-    code += "const uint8_t bindata[] PROGMEM = {";
+    // code += "// " + "file name : " + f.name + "\n";
+    // code += "// " + "file size : " + f.size + " bytes\n\n";
+    code += "{";
     var reader = new FileReader();
     reader.onloadend = function(){
         var uint8array = new Uint8Array(reader.result);
