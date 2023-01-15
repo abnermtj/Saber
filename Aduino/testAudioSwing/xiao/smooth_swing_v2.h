@@ -1,10 +1,10 @@
 #define SwingStrengthThreshold 80.0f
 #define Transition1Degrees 45.0f
 #define Transition2Degrees 160.0f
-float SwingSensitivity = 6000.0f; // Rad/s that caps outs the sound volumeOriginal 450.0f
+float SwingSensitivity = 12000.0f; // Rad/s that caps outs the sound volumeOriginal 450.0f
 #define MaximumHumDucking 75.0f // Orig 75
-float SwingSharpness = 1.5f; // Orig 1.75f
-float MaxSwingVolume = 3.0f; // Orig 3.0
+float SwingSharpness = 3.0f; // Orig 1.75f
+float MaxSwingVolume = 4.0f; // Orig 3.0
 
 #include "vec3.h"
 #include "box_filter.h"
@@ -110,7 +110,7 @@ void SB_Motion(const Vec3 &raw_gyro, bool clear) {
         float swing_strength = min(1.0f, speed / SwingSensitivity);
 
         // 50000000 was a good value below
-        A.rotate(-speed * delta / 8000000.0);  // This shifts the midpoint of the swing, it accumulates.
+        A.rotate(-speed * delta / 8600000.0);  // This shifts the midpoint of the swing, it accumulates.
      // A.rotate(-speed * delta / 1000000.0); // Th
         // original value is 1000000.0
         // Reache the midpoint of the swing here
@@ -126,7 +126,7 @@ void SB_Motion(const Vec3 &raw_gyro, bool clear) {
         if (A.begin() < 0.0)
           mixab = constrain(-A.begin() / A.width, 0.0, 1.0);
 
-        float mixhum = pow(swing_strength, SwingSharpness); 
+        float mixhum = constrain (pow(swing_strength, 0.85)/3 + 2* pow(swing_strength, 3)/3, 0 ,1); // =\frac{x^{1}}{3}\ +\frac{2x^{3}}{3}
 
         hum_volume = 1.0 - mixhum * MaximumHumDucking / 100.0;  // OUPUT
 
@@ -143,16 +143,16 @@ void SB_Motion(const Vec3 &raw_gyro, bool clear) {
           // Serial.print(A.begin());
           // Serial.print(" \tE: ");
           // Serial.print(A.end());
-          // Serial.print(" \t,lvol: ");
-          // Serial.print(lswingVolume);
-          // Serial.print(" \t,hvol: ");
-          // Serial.print(hswingVolume);
-          // Serial.print(" \t,mixhum: ");
-          // Serial.print(mixhum);
-          // Serial.print(" \t,mixab: ");
-          // Serial.print(mixab);
-          // Serial.print(" \t,hum_volume: ");
-          // Serial.println(hum_volume);
+          Serial.print(" \t,lvol: ");
+          Serial.print(lswingVolume);
+          Serial.print(" \t,hvol: ");
+          Serial.print(hswingVolume);
+          Serial.print(" \t,mixhum: ");
+          Serial.print(mixhum);
+          Serial.print(" \t,mixab: ");
+          Serial.print(mixab);
+          Serial.print(" \t,hum_volume: ");
+          Serial.println(hum_volume);
  
 
           if (flip) {
@@ -160,6 +160,7 @@ void SB_Motion(const Vec3 &raw_gyro, bool clear) {
             hswingVolume = mixhum * (1.0 - mixab);
           } else {
             hswingVolume = mixhum * mixab;
+            
             lswingVolume = mixhum * (1.0 - mixab);
           }
 

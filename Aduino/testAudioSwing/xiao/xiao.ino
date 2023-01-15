@@ -3,7 +3,7 @@
 
 #define AUDIO_PIN D7
 #define VOLUME 1
-long i, i2, i3;       //sample play progress
+long i, i2, i3;      //sample play progress
 int audioSpeed = 1;  //sample frequency
 bool startAudio, prevStartAudio, done_trig1;
 int sound_out;  //sound out PWM rate
@@ -27,19 +27,19 @@ volatile uint8_t ledstat = 0;
 MPU6050 mpu;
 
 #define INTERRUPT_PIN 2  // use pin 2 on Arduino Uno & most boards
-VectorInt16 raw_gyro;         // [x, y, z]            gyro sensor measurements
+VectorInt16 raw_gyro;    // [x, y, z]            gyro sensor measurements
 // MPU control/status vars
-bool dmpReady = false;  // set true if DMP init was successful
-uint8_t mpuIntStatus;   // holds actual interrupt status byte from MPU
-uint8_t devStatus;      // return status after each device operation (0 = success, !0 = error)
-uint16_t packetSize;    // expected DMP packet size (default is 42 bytes)
-uint16_t fifoCount;     // count of all bytes currently in FIFO
-uint8_t fifoBuffer[64]; // FIFO storage buffer
+bool dmpReady = false;   // set true if DMP init was successful
+uint8_t mpuIntStatus;    // holds actual interrupt status byte from MPU
+uint8_t devStatus;       // return status after each device operation (0 = success, !0 = error)
+uint16_t packetSize;     // expected DMP packet size (default is 42 bytes)
+uint16_t fifoCount;      // count of all bytes currently in FIFO
+uint8_t fifoBuffer[64];  // FIFO storage buffer
 // ================================================================
 // ===               INTERRUPT DETECTION ROUTINE                ===
 // ================================================================
 
-volatile bool mpuInterrupt = false;     // indicates whether MPU interrupt pin has gone high
+volatile bool mpuInterrupt = false;  // indicates whether MPU interrupt pin has gone high
 void dmpDataReady() {
   mpuInterrupt = true;
 }
@@ -55,28 +55,20 @@ void IRAM_ATTR onTimer() {
     long hswingArrSize = sizeof(highSwingSound) / sizeof(highSwingSound[0]);
     long humArrSize = sizeof(humSound) / sizeof(humSound[0]);
 
-    i = (i + audioSpeed) % (lswingArrSize/ 2 - 1);
-    i2 = (i2 + audioSpeed) % (hswingArrSize/ 2 - 1);
-    i3 = (i3 + audioSpeed) % (humArrSize / 2 - 1) ;
+    i = (i + audioSpeed) % (lswingArrSize / 2 - 1);
+    i2 = (i2 + audioSpeed) % (hswingArrSize / 2 - 1);
+    i3 = (i3 + audioSpeed) % (humArrSize / 2 - 1);
 
-    //little endian
-     int16_t  lswingSample = ((int16_t )((pgm_read_byte(&(lowSwingSound[i * 2]))) | (pgm_read_byte(&(lowSwingSound[i * 2 + 1]))) << 8) >> 6);      //16bit to 10bit
-     int16_t  hswingSample = ((int16_t )((pgm_read_byte(&(highSwingSound[i2 * 2]))) | (pgm_read_byte(&(highSwingSound[i2 * 2 + 1]))) << 8) >> 6);  //16bit to 10bit Shifts are padded with zero!
-    int16_t  humSample = ((int16_t )((pgm_read_byte(&(humSound[i3 * 2]))) | (pgm_read_byte(&(humSound[i3 * 2 + 1]))) << 8) >> 6);                 //16bit to 10bit
+    //little endian 16bit to 10bit samples
+    int16_t lswingSample = ((int16_t)((pgm_read_byte(&(lowSwingSound[i * 2]))) | (pgm_read_byte(&(lowSwingSound[i * 2 + 1]))) << 8) >> 6);
+    int16_t hswingSample = ((int16_t)((pgm_read_byte(&(highSwingSound[i2 * 2]))) | (pgm_read_byte(&(highSwingSound[i2 * 2 + 1]))) << 8) >> 6);
+    int16_t humSample = ((int16_t)((pgm_read_byte(&(humSound[i3 * 2]))) | (pgm_read_byte(&(humSound[i3 * 2 + 1]))) << 8) >> 6);
 
-
-    
-    // lswingSample = 0;
-    // hswingSample = 0;
-     sound_out = (lswingSample * lswingVolume + hswingSample * hswingVolume + humSample * humVolume  ) *4;
-      // sound_out = lswingSample ;
-       // sound_out = (lswingSample * lswingVolume + hswingSample * hswingVolume  ) / 4;
+    sound_out = (lswingSample * lswingVolume + hswingSample * hswingVolume + humSample * humVolume) ;
+    // sound_out = lswingSample ;
+    // sound_out = (lswingSample * lswingVolume + hswingSample * hswingVolume  ) / 4;
     sound_out = constrain(sound_out, -511, 512);
-    
-    //Serial.println(sound_out);
-    //sound_out = hswingSample;
-    //sound_out = humSample * humVolume;
-    ledcWrite(1, sound_out +511);  //PWM output first arg is the channel attached via ledcAttachPin()
+    ledcWrite(1, sound_out + 511);  //PWM output first arg is the channel attached via ledcAttachPin()
   }
 
   // Allow be interrupts
@@ -142,7 +134,7 @@ void setupIMU() {
   devStatus = mpu.dmpInitialize();
 
   // supply your own gyro offsets here, scaled for min sensitivity
- mpu.setXAccelOffset(-3289);
+  mpu.setXAccelOffset(-3289);
   mpu.setYAccelOffset(-1392);
   mpu.setZAccelOffset(516);
   mpu.setXGyroOffset(240);
@@ -204,26 +196,25 @@ void loop() {
 
   // if programming failed, don't try to do anything
   if (!dmpReady) return;
-  
+
   // read a packet from FIFO
-  if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) { // Get the Latest packet 
-   mpu.dmpGetGyro(&raw_gyro, fifoBuffer);
-   Vec3 raw_gyro_converted =  Vec3(raw_gyro.x, raw_gyro.y, raw_gyro.z);
-   SB_Motion(raw_gyro_converted, false);
+  if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) {  // Get the Latest packet
+    mpu.dmpGetGyro(&raw_gyro, fifoBuffer);
+    Vec3 raw_gyro_converted = Vec3(raw_gyro.x, raw_gyro.y, raw_gyro.z);
+    SB_Motion(raw_gyro_converted, false);
   }
   // updateVolume();
   // Serial.println("SET");
-// Serial.println(pgm_read_byte(&(lowSwingSound[i * 2])));
-// Serial.println((int16_t )((pgm_read_byte(&(lowSwingSound[i * 2]))) | (pgm_read_byte(&(lowSwingSound[i * 2 + 1]))) << 8));
-//  Serial.println(sound_out);
-  // int lswingSample = (((pgm_read_byte(&(lowSwingSound[i * 2]))) | (pgm_read_byte(&(lowSwingSound[i * 2 + 1]))) << 8) >> 6);  
+  // Serial.println(pgm_read_byte(&(lowSwingSound[i * 2])));
+  // Serial.println((int16_t )((pgm_read_byte(&(lowSwingSound[i * 2]))) | (pgm_read_byte(&(lowSwingSound[i * 2 + 1]))) << 8));
+  //  Serial.println(sound_out);
+  // int lswingSample = (((pgm_read_byte(&(lowSwingSound[i * 2]))) | (pgm_read_byte(&(lowSwingSound[i * 2 + 1]))) << 8) >> 6);
 
   // int choice = 0;
   // if (Serial.available() != 0) {
-    
-  //   float input= Serial.parseFloat();
+
+  //   float input= Serial.parz`seFloat();
   //   Serial.println(input);
   //   SwingSensitivity = input;
   // }
-
 }
