@@ -1,7 +1,7 @@
 #define SwingStrengthThreshold 80.0f
 #define Transition1Degrees 45.0f
 #define Transition2Degrees 160.0f
-float SwingSensitivity = 20000.0f; // Rad/s that caps outs the sound volumeOriginal 450.0f
+float SwingSensitivity = 6000.0f; // Rad/s that caps outs the sound volumeOriginal 450.0f
 #define MaximumHumDucking 75.0f // Orig 75
 float SwingSharpness = 1.5f; // Orig 1.75f
 float MaxSwingVolume = 3.0f; // Orig 3.0
@@ -110,7 +110,7 @@ void SB_Motion(const Vec3 &raw_gyro, bool clear) {
         float swing_strength = min(1.0f, speed / SwingSensitivity);
 
         // 50000000 was a good value below
-        A.rotate(-speed * delta / 11000000.0);  // This shifts the midpoint of the swing, it accumulates.
+        A.rotate(-speed * delta / 8000000.0);  // This shifts the midpoint of the swing, it accumulates.
      // A.rotate(-speed * delta / 1000000.0); // Th
         // original value is 1000000.0
         // Reache the midpoint of the swing here

@@ -212,10 +212,10 @@ void loop() {
    SB_Motion(raw_gyro_converted, false);
   }
   // updateVolume();
-  Serial.println("SET");
+  // Serial.println("SET");
 // Serial.println(pgm_read_byte(&(lowSwingSound[i * 2])));
 // Serial.println((int16_t )((pgm_read_byte(&(lowSwingSound[i * 2]))) | (pgm_read_byte(&(lowSwingSound[i * 2 + 1]))) << 8));
- Serial.println(sound_out);
+//  Serial.println(sound_out);
   // int lswingSample = (((pgm_read_byte(&(lowSwingSound[i * 2]))) | (pgm_read_byte(&(lowSwingSound[i * 2 + 1]))) << 8) >> 6);  
 
   // int choice = 0;
