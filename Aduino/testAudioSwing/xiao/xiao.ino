@@ -1,56 +1,62 @@
 #include "sample.h"
 #include "smooth_swing_v2.h"
-
-#define AUDIO_PIN D7
-#define VOLUME 1
-long i, i2, i3;      //sample play progress
-int audioSpeed = 1;  //sample frequency
-bool startAudio, prevStartAudio, done_trig1;
-int sound_out;  //sound out PWM rate
-
-float actual_lswingVolume = 0;
-float actual_hswingVolume = 0;
-float actual_humVolume = 1;
-
-//-------------------------timer interrupt for sound----------------------------------
-hw_timer_t *audioSampleTimer = NULL;
-portMUX_TYPE timerMux0 = portMUX_INITIALIZER_UNLOCKED;
-volatile uint8_t ledstat = 0;
-
 #include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps612.h"
 
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
 #include "Wire.h"
 #endif
+// ---------------------------- PINOUT -------------------------------
+#define AUDIO_PIN D7
+#define MPU_INTERRUPT_PIN D2
 
-MPU6050 mpu;
+// ---------------------------- MP3 -------------------------------
+long i, i2, i3;      //sample play progress
+int audioSpeed = 1;  //sample frequency
+int sound_out;       //sound out PWM rate
+int idleState;
+float cur_lswingVolume = 0;
+float cur_hswingVolume = 0;
+float cur_humVolume = 1;
 
-#define INTERRUPT_PIN 2  // use pin 2 on Arduino Uno & most boards
-VectorInt16 raw_gyro;    // [x, y, z]            gyro sensor measurements
+// ---------------------------- SETTINGS -------------------------------
+#define CLASH_THRESHOLD 1
+#define MASTER_VOLUME 3
+#define VOLUME_LERP 0.043
+
+//-------------------------timer interrupt for sound----------------------------------
+hw_timer_t *audioSampleTimer = NULL;
+portMUX_TYPE timerMux0 = portMUX_INITIALIZER_UNLOCKED;
+
+
 // MPU control/status vars
-bool dmpReady = false;   // set true if DMP init was successful
-uint8_t mpuIntStatus;    // holds actual interrupt status byte from MPU
-uint8_t devStatus;       // return status after each device operation (0 = success, !0 = error)
-uint16_t packetSize;     // expected DMP packet size (default is 42 bytes)
-uint16_t fifoCount;      // count of all bytes currently in FIFO
-uint8_t fifoBuffer[64];  // FIFO storage buffer
+MPU6050 mpu;
+bool dmpReady = false;         // set true if DMP init was successful
+uint8_t mpuIntStatus;          // holds actual interrupt status byte from MPU
+uint8_t devStatus;             // return status after each device operation (0 = success, !0 = error)
+uint16_t exepectedPacketSize;  // expected DMP packet size (default is 42 bytes)
+uint16_t fifoCount;            // count of all bytes currently in FIFO
+uint8_t fifoBuffer[64];        // FIFO storage buffer
+VectorInt16 accel, gyro;       // [x, y, z]            gyro sensor measurements
+I2Cdev i2ccomm;
+
 // ================================================================
 // ===               INTERRUPT DETECTION ROUTINE                ===
 // ================================================================
 
 volatile bool mpuInterrupt = false;  // indicates whether MPU interrupt pin has gone high
 void dmpDataReady() {
+  Serial.println("Here");
   mpuInterrupt = true;
 }
 
 
-
-void IRAM_ATTR onTimer() {
+// Called every 22050Hz to play 10bit audio sample little endian
+void IRAM_ATTR audioISR() {
   // Cannot be interupted
   portENTER_CRITICAL_ISR(&timerMux0);
 
-  if (done_trig1 == 1) {  // Start audio playback
+  if (idleState == 1) {  // Start audio playback
     long lswingArrSize = sizeof(lowSwingSound) / sizeof(lowSwingSound[0]);
     long hswingArrSize = sizeof(highSwingSound) / sizeof(highSwingSound[0]);
     long humArrSize = sizeof(humSound) / sizeof(humSound[0]);
@@ -59,20 +65,21 @@ void IRAM_ATTR onTimer() {
     i2 = (i2 + audioSpeed) % (hswingArrSize / 2 - 1);
     i3 = (i3 + audioSpeed) % (humArrSize / 2 - 1);
 
-    //little endian 16bit to 10bit samples
     int16_t lswingSample = ((int16_t)((pgm_read_byte(&(lowSwingSound[i * 2]))) | (pgm_read_byte(&(lowSwingSound[i * 2 + 1]))) << 8) >> 6);
     int16_t hswingSample = ((int16_t)((pgm_read_byte(&(highSwingSound[i2 * 2]))) | (pgm_read_byte(&(highSwingSound[i2 * 2 + 1]))) << 8) >> 6);
     int16_t humSample = ((int16_t)((pgm_read_byte(&(humSound[i3 * 2]))) | (pgm_read_byte(&(humSound[i3 * 2 + 1]))) << 8) >> 6);
 
-    sound_out = (lswingSample * lswingVolume + hswingSample * hswingVolume + humSample * humVolume) ;
-    // sound_out = lswingSample ;
-    // sound_out = (lswingSample * lswingVolume + hswingSample * hswingVolume  ) / 4;
-    sound_out = constrain(sound_out, -511, 512);
-    ledcWrite(1, sound_out + 511);  //PWM output first arg is the channel attached via ledcAttachPin()
+    sound_out = (lswingSample * cur_lswingVolume + hswingSample * cur_hswingVolume + humSample * cur_humVolume) / (MaxSwingVolume + 1);
+    sound_out = constrain(sound_out * MASTER_VOLUME, -511, 512);
+    ledcWrite(1, sound_out + 511);  //Sets voltage level (0-1023) for PWM on chanel 1
   }
 
   // Allow be interrupts
   portEXIT_CRITICAL_ISR(&timerMux0);
+}
+
+void clash() {
+  Serial.println("CLASH detected");
 }
 
 void playAdvertisement() {
@@ -92,129 +99,121 @@ void loopCurrentTrack(bool) {
 }
 
 void setupAudio() {
-  pinMode(AUDIO_PIN, OUTPUT);  //sound_out PWM
+  pinMode(AUDIO_PIN, OUTPUT);
 
-  ledcSetup(1, 39000, 10);      // ledchannel, PWM frequency, resolution
-  ledcAttachPin(AUDIO_PIN, 1);  //(LED_PIN, LEDC_CHANNEL_0);//timer ch1 , apply AUDIO_PIN output
+  ledcSetup(1, 39000, 10);      // ledchannel, PWM frequency, resolution in bits
+  ledcAttachPin(AUDIO_PIN, 1);  // Set Audio pin to timer ch1
 
-  audioSampleTimer = timerBegin(0, 3628, true);            // begins timer 0, 12.5ns*3628 = 45.35usec(22050 Hz), count-up
-  timerAttachInterrupt(audioSampleTimer, &onTimer, true);  // edge-triggered
-  timerAlarmWrite(audioSampleTimer, 1, true);              // Counts up to 1 then triggers the interrupt, auto-reload
-  timerAlarmEnable(audioSampleTimer);                      // enable audioSampleTimer
+  audioSampleTimer = timerBegin(0, 3628, true);             // begins timer 0, 12.5ns*3628 = 45.35usec(22050 Hz), count-up
+  timerAttachInterrupt(audioSampleTimer, &audioISR, true);  // edge-triggered
+  timerAlarmWrite(audioSampleTimer, 1, true);               // Counts up to 1 then triggers the interrupt, auto-reload
+  timerAlarmEnable(audioSampleTimer);                       // enable audioSampleTimer
 
   Serial.println(F("Audio setup complete"));
 }
 
-void setupIMU() {
-// join I2C bus (I2Cdev library doesn't do this automatically)
-#if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
-  Wire.begin();
-  Wire.setClock(400000);  // 400kHz I2C clock. Comment this line if having compilation difficulties
-#elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
-  Fastwire::setup(400, true);
-#endif
-
-  // NOTE: 8MHz or slower host processors, like the Teensy @ 3.3V or Arduino
-  // Pro Mini running at 3.3V, cannot handle this baud rate reliably due to
-  // the baud timing being too misaligned with processor ticks. You must use
-  // 38400 or slower in these cases, or use some kind of external separate
-  // crystal solution for the UART timer.
-
-  // initialize device
-  Serial.println(F("Initializing I2C devices..."));
-  mpu.initialize();
-  pinMode(INTERRUPT_PIN, INPUT);
-
-  // verify connection
-  Serial.println(F("Testing device connections..."));
-  Serial.println(mpu.testConnection() ? F("MPU6050 connection successful") : F("MPU6050 connection failed"));
-
-  // load and configure the DMP
-  Serial.println(F("Initializing DMP..."));
-  devStatus = mpu.dmpInitialize();
-
-  // supply your own gyro offsets here, scaled for min sensitivity
+// These are specific to each IMU, hard code values from callibration programs
+void initIMUOffsets() {
   mpu.setXAccelOffset(-3289);
   mpu.setYAccelOffset(-1392);
   mpu.setZAccelOffset(516);
   mpu.setXGyroOffset(240);
   mpu.setYGyroOffset(9);
   mpu.setZGyroOffset(27);
+}
+void setupIMU() {
+// join I2C bus (I2Cdev library doesn't do this automatically)
+#if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
+  Wire.begin();
+  Wire.setClock(400000);
+#elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
+  Fastwire::setup(400, true);
+#endif
+
+  Serial.println(F("Initializing I2C devices..."));
+  mpu.initialize();
+  // pinMode(INTERRUPT_PIN, INPUT);
+
+  Serial.println(F("Testing device connections..."));
+  Serial.println(mpu.testConnection() ? F("MPU6050 connection successful") : F("MPU6050 connection failed"));
+
+  // supply your own gyro offsets here, scaled for min sensitivity
+  Serial.println(F("Initializing IMU offsets"));
+  initIMUOffsets();
+
+  Serial.println(F("Initializing DMP..."));
+  devStatus = mpu.dmpInitialize();
 
 
-  // make sure it worked (returns 0 if so)
   if (devStatus == 0) {
-    // turn on the DMP, now that it's ready
-    Serial.println(F("Enabling DMP..."));
+    Serial.println(F("DMP initialization success, Enabling DMP..."));
     mpu.setDMPEnabled(true);
 
-    // enable Arduino interrupt detection
-    Serial.print(F("Enabling interrupt detection (Arduino external interrupt "));
-    Serial.print(digitalPinToInterrupt(INTERRUPT_PIN));
-    Serial.println(F(")..."));
-    attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING);
-    mpuIntStatus = mpu.getIntStatus();
-
-    // set our DMP Ready flag so the main loop() function knows it's okay to use it
-    Serial.println(F("DMP ready! Waiting for first interrupt..."));
     dmpReady = true;
-
-    // get expected DMP packet size for later comparison
-    packetSize = mpu.dmpGetFIFOPacketSize();
+    exepectedPacketSize = mpu.dmpGetFIFOPacketSize();
   } else {
     // ERROR!
-    // 1 = initial memory load failed
+    // 1 = initial memory load failed (usualy case)
     // 2 = DMP configuration updates failed
-    // (if it's going to break, usually the code will be 1)
     Serial.print(F("DMP Initialization failed (code "));
     Serial.print(devStatus);
     Serial.println(F(")"));
   }
 }
+
 void setup() {
   Serial.begin(115200);
-
   setupAudio();
-
   setupIMU();
-  SB_Init();
-  done_trig1 = 1;
+  SmoothSwingInit();
+  idleState = 1;
   Serial.println("DONE SETUP");
 }
 
+void UpdateVolume() {
+  if (cur_lswingVolume < lswingVolume) {  // Increasing volume is faster than decreasing volume
+    cur_lswingVolume = lswingVolume * VOLUME_LERP * 2 + cur_lswingVolume * (1 - VOLUME_LERP * 2);
+  } else {                                                                                 // Decreasing volume
+    cur_lswingVolume = lswingVolume * VOLUME_LERP + cur_lswingVolume * (1 - VOLUME_LERP);  // Fade Out
+  }
 
-// #define VOLUME_LERP 1
-// void updateVolume() {
-//   actual_lswingVolume = lswingVolume * VOLUME_LERP + actual_lswingVolume * (1 - VOLUME_LERP);
-//   actual_hswingVolume = hswingVolume * VOLUME_LERP + actual_hswingVolume * (1 - VOLUME_LERP);
-//   actual_humVolume = humVolume * VOLUME_LERP + actual_humVolume * (1 - VOLUME_LERP);
-// }
+  if (cur_hswingVolume < hswingVolume) {  // Increasing volume is faster than decreasing volume
+    cur_hswingVolume = hswingVolume * VOLUME_LERP * 2 + cur_hswingVolume * (1 - VOLUME_LERP * 2);
+  } else {                                                                                 // Decreasing volume
+    cur_hswingVolume = hswingVolume * VOLUME_LERP + cur_hswingVolume * (1 - VOLUME_LERP);  // Fade Out
+  }
+
+  if (cur_humVolume < humVolume) {  // Increasing volume is faster than decreasing volume
+    cur_humVolume = humVolume * VOLUME_LERP * 2 + cur_humVolume * (1 - VOLUME_LERP * 2);
+  } else {                                                                        // Decreasing volume
+    cur_humVolume = humVolume * VOLUME_LERP + cur_humVolume * (1 - VOLUME_LERP);  // Fade Out
+  }
+}
+
+
+int16_t ax, ay, az;
+int16_t gx, gy, gz;
 
 void loop() {
-  //-------------------------pitch setting----------------------------------
-  audioSpeed = 1;
-
-  // if programming failed, don't try to do anything
   if (!dmpReady) return;
-
-  // read a packet from FIFO
+  // read a packet from MPU FIFO
   if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) {  // Get the Latest packet
-    mpu.dmpGetGyro(&raw_gyro, fifoBuffer);
-    Vec3 raw_gyro_converted = Vec3(raw_gyro.x, raw_gyro.y, raw_gyro.z);
-    SB_Motion(raw_gyro_converted, false);
+    mpu.dmpGetGyro(&gyro, fifoBuffer);
+    Vec3 gyroVec = Vec3(gyro.x, gyro.y, gyro.z);
+    SB_Motion(gyroVec, false);
   }
-  // updateVolume();
-  // Serial.println("SET");
-  // Serial.println(pgm_read_byte(&(lowSwingSound[i * 2])));
-  // Serial.println((int16_t )((pgm_read_byte(&(lowSwingSound[i * 2]))) | (pgm_read_byte(&(lowSwingSound[i * 2 + 1]))) << 8));
-  //  Serial.println(sound_out);
-  // int lswingSample = (((pgm_read_byte(&(lowSwingSound[i * 2]))) | (pgm_read_byte(&(lowSwingSound[i * 2 + 1]))) << 8) >> 6);
 
-  // int choice = 0;
-  // if (Serial.available() != 0) {
+  mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+  long gyrMag = (long) gx * gx + (long) gy * gy + (long) gz * gz;
+  long accMag = (long) ax * ax + (long) ay * ay + (long) az * az;
 
-  //   float input= Serial.parz`seFloat();
-  //   Serial.println(input);
-  //   SwingSensitivity = input;
-  // }
+
+  if (gyrMag > 45000000 && accMag > 1900000000){
+    // Serial.print("gyr: ");
+    // Serial.print(gyrMag);
+    // Serial.print(" ,accel: ");
+    // Serial.println(accMag);
+    clash();
+  }
+  UpdateVolume();
 }

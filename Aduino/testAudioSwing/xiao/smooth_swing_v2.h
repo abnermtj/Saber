@@ -1,10 +1,9 @@
 #define SwingStrengthThreshold 80.0f
 #define Transition1Degrees 45.0f
 #define Transition2Degrees 160.0f
-float SwingSensitivity = 12000.0f; // Rad/s that caps outs the sound volumeOriginal 450.0f
-#define MaximumHumDucking 75.0f // Orig 75
-float SwingSharpness = 3.0f; // Orig 1.75f
-float MaxSwingVolume = 4.0f; // Orig 3.0
+#define SwingSensitivity 12000.0f  // Rad/s that caps outs the sound volumeOriginal 450.0f
+#define MaximumHumDucking 75.0f    // Orig 75
+#define MaxSwingVolume 3.0f        // Orig 3.0
 
 #include "vec3.h"
 #include "box_filter.h"
@@ -12,12 +11,13 @@ float MaxSwingVolume = 4.0f; // Orig 3.0
 float lswingVolume = 0;
 float hswingVolume = 0;
 float humVolume = 1;
+
 bool flip = 0;
 
 uint32_t last_random_ = 0;
+uint32_t last_micros;
 
 BoxFilter<Vec3, 3> gyro_filter_;
-uint32_t last_micros_;
 
 enum class SwingState {
   OFF,  // waiting for swing to start
@@ -25,9 +25,7 @@ enum class SwingState {
   OUT,  // Waiting for sound to fade out
 };
 
-SwingState state_ = SwingState::OFF;
-
-
+SwingState swingState = SwingState::OFF;
 
 struct Data {
   void SetTransition(float mp, float w) {
@@ -46,9 +44,11 @@ struct Data {
   float midpoint = 0.0;
   float width = 0.0;
 };
+
 Data A;
 Data B;
 
+// Swaps the between high and low pitch sounds
 void Swap() {
   Data C = A;
   A = B;
@@ -56,64 +56,55 @@ void Swap() {
   flip = !flip;
 }
 
-  // Should only be done when the volume is near zero.
-  void PickRandomSwing()
-  {
-    uint32_t m = millis();
-    // No point in picking a new random so soon after picking one.
-    if (m - last_random_ < 1000)
-      return;
-    last_random_ = m;
-    
+// Should only be done when the volume is near zero.
+void PickRandomSwing() {
+  uint32_t timestamp_ms = millis();
+  // No point in picking a new random so soon after picking one.
+  if (timestamp_ms - last_random_ < 1000)
+    return;
+  last_random_ = timestamp_ms;
 
-    if (random(2)){ // Either start with low pitch or high pitch
-      Swap();
-    }
-
-    float t1_offset = random(1000) / 1000.0 * 50 + 10; // 10-60 Degrees  : Center of transition region
-    A.SetTransition(t1_offset, 45.0f);         // 10- 60 degrees, 45.0f
-    B.SetTransition(t1_offset + 180.0, 160.0f); // 190 - 240degrees, 160f default
+  if (random(2)) {  // Either start with low pitch or high pitch
+    Swap();
   }
 
-  void SB_Init(){
-    PickRandomSwing();
-  }
+  float t1_offset = random(1000) / 1000.0 * 50 + 10;  // 10 - 60 degrees. Center of transition region
+  A.SetTransition(t1_offset, 45.0f);                  // 10 - 60 degrees, 45.0f
+  B.SetTransition(t1_offset + 180.0, 160.0f);         // 190 - 240 degrees, 160f default
+}
+
+void SmoothSwingInit() {
+  PickRandomSwing();
+}
+
 void SB_Motion(const Vec3 &raw_gyro, bool clear) {
-  if (clear) {
-    gyro_filter_.filter(raw_gyro);
-    gyro_filter_.filter(raw_gyro);
-  }
+  //smooth gyro values
   Vec3 gyro = gyro_filter_.filter(raw_gyro);
-  // degrees per second
-  // May not need to smooth gyro since volume is smoothed.
-  
-  
+
   float speed = sqrtf(gyro.z * gyro.z + gyro.x * gyro.x);
   uint32_t t = micros();
-  uint32_t delta = t - last_micros_;
-  if (delta > 1000000)
+  uint32_t delta = t - last_micros;
+  if (delta > 1000000) {
     delta = 1;
-  last_micros_ = t;
+  }
+  last_micros = t;
   float hum_volume = 1.0;
 
-  switch (state_) {
+  switch (swingState) {
     case SwingState::OFF:
       if (speed < SwingStrengthThreshold) {
         // Serial.print("speed: ");
         // Serial.println(speed);
         break;
       }
-      state_ = SwingState::ON;
-
+      swingState = SwingState::ON;
+    
     case SwingState::ON:
       if (speed >= SwingStrengthThreshold * 0.9) {
         float swing_strength = min(1.0f, speed / SwingSensitivity);
 
-        // 50000000 was a good value below
-        A.rotate(-speed * delta / 8600000.0);  // This shifts the midpoint of the swing, it accumulates.
-     // A.rotate(-speed * delta / 1000000.0); // Th
-        // original value is 1000000.0
-        // Reache the midpoint of the swing here
+        A.rotate(-speed * delta / 8600000.0);  // This shifts the midpoint of the swing, such that it accumulates until we have to swap
+
         // If the current transition is done, switch A & B,
         // and set the next transition to be 180 degrees from the one
         // that is done.
@@ -126,56 +117,52 @@ void SB_Motion(const Vec3 &raw_gyro, bool clear) {
         if (A.begin() < 0.0)
           mixab = constrain(-A.begin() / A.width, 0.0, 1.0);
 
-        float mixhum = constrain (pow(swing_strength, 0.85)/3 + 2* pow(swing_strength, 3)/3, 0 ,1); // =\frac{x^{1}}{3}\ +\frac{2x^{3}}{3}
+        float mixhum = constrain(pow(swing_strength, 0.85) / 3 + 2 * pow(swing_strength, 2.8) / 3, 0, 1);
 
         hum_volume = 1.0 - mixhum * MaximumHumDucking / 100.0;  // OUPUT
+        mixhum *= MaxSwingVolume;                               // OUTPUT
 
-        mixhum *= MaxSwingVolume;  // OUTPUT
+        // Serial.print("speed: ");
+        // Serial.print(speed);
+        // Serial.print(" \tR: ");
+        // Serial.print(-speed * delta / 1000000.0);
+        // Serial.print(" \tMP: ");
+        // Serial.print(A.midpoint);
+        // Serial.print(" \tB: ");
+        // Serial.print(A.begin());
+        // Serial.print(" \tE: ");
+        // Serial.print(A.end());
+        // Serial.print(" \t,lvol: ");
+        // Serial.print(lswingVolume);
+        // Serial.print(" \t,hvol: ");
+        // Serial.print(hswingVolume);
+        // Serial.print(" \t,mixhum: ");
+        // Serial.print(mixhum);
+        // Serial.print(" \t,mixab: ");
+        // Serial.print(mixab);
+        // Serial.print(" \t,hum_volume: ");
+        // Serial.println(hum_volume);
 
-        
-          // Serial.print("speed: ");
-          // Serial.print(speed);
-          // Serial.print(" \tR: ");
-          // Serial.print(-speed * delta / 1000000.0);
-          // Serial.print(" \tMP: ");
-          // Serial.print(A.midpoint);
-          // Serial.print(" \tB: ");
-          // Serial.print(A.begin());
-          // Serial.print(" \tE: ");
-          // Serial.print(A.end());
-          Serial.print(" \t,lvol: ");
-          Serial.print(lswingVolume);
-          Serial.print(" \t,hvol: ");
-          Serial.print(hswingVolume);
-          Serial.print(" \t,mixhum: ");
-          Serial.print(mixhum);
-          Serial.print(" \t,mixab: ");
-          Serial.print(mixab);
-          Serial.print(" \t,hum_volume: ");
-          Serial.println(hum_volume);
- 
-
-          if (flip) {
-            lswingVolume = mixhum * mixab;
-            hswingVolume = mixhum * (1.0 - mixab);
-          } else {
-            hswingVolume = mixhum * mixab;
-            
-            lswingVolume = mixhum * (1.0 - mixab);
-          }
-
-        
+        if (flip) {
+          lswingVolume = mixhum * mixab;
+          hswingVolume = mixhum * (1.0 - mixab);
+        } else {
+          hswingVolume = mixhum * mixab;
+          lswingVolume = mixhum * (1.0 - mixab);
+        }
         break;
       }
+
       lswingVolume = 0;
       hswingVolume = 0;
-
-      state_ = SwingState::OUT;
+      swingState = SwingState::OUT;
 
     case SwingState::OUT:
       PickRandomSwing();
-      state_ = SwingState::OFF;
+      swingState = SwingState::OFF;
+      break;
+    default:
+      Serial.println("Invalid Swing State");
   }
-  // Must always set hum volume, or fade-out doesn't work.
   humVolume = hum_volume;
 }
