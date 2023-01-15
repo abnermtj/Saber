@@ -8,7 +8,6 @@
 #endif
 // ---------------------------- PINOUT -------------------------------
 #define AUDIO_PIN D7
-#define MPU_INTERRUPT_PIN D2
 
 // ---------------------------- MP3 -------------------------------
 long i, i2, i3;      //sample play progress
@@ -20,7 +19,6 @@ float cur_hswingVolume = 0;
 float cur_humVolume = 1;
 
 // ---------------------------- SETTINGS -------------------------------
-#define CLASH_THRESHOLD 1
 #define MASTER_VOLUME 3
 #define VOLUME_LERP 0.043
 
@@ -43,13 +41,6 @@ I2Cdev i2ccomm;
 // ================================================================
 // ===               INTERRUPT DETECTION ROUTINE                ===
 // ================================================================
-
-volatile bool mpuInterrupt = false;  // indicates whether MPU interrupt pin has gone high
-void dmpDataReady() {
-  Serial.println("Here");
-  mpuInterrupt = true;
-}
-
 
 // Called every 22050Hz to play 10bit audio sample little endian
 void IRAM_ATTR audioISR() {

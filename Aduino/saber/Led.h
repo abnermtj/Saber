@@ -4,6 +4,7 @@
 #include <avr/power.h>
 #endif
 
+
 // Parameter 1 = number of pixels in strip
 // Parameter 2 = Arduino pin number (most are valid)
 // Parameter 3 = pixel type flags, add together as needed:

@@ -1,8 +1,11 @@
-#define BUTTON_PIN A6
+#define BUTTON_PIN A0
+#define LED_PIN D8
 void setup()
 {
   Serial.begin(115200);
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(BUTTON_PIN, INPUT);
+   pinMode(D7, OUTPUT);
+    pinMode(LED_PIN, OUTPUT);
 }
 void loop()
 {
@@ -10,7 +13,7 @@ void loop()
   
   Serial.println(buttonState);
 
-  if (buttonState > 0) {
+  if (buttonState > 150) {
     Serial.println("NOT PRESSED");
     
   } else {
