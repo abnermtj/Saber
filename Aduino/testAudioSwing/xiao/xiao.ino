@@ -51,31 +51,32 @@ void IRAM_ATTR onTimer() {
   portENTER_CRITICAL_ISR(&timerMux0);
 
   if (done_trig1 == 1) {  // Start audio playback
-    int lswingArrSize = sizeof(lowSwingSound) / sizeof(lowSwingSound[0]);
-    int hswingArrSize = sizeof(highSwingSound) / sizeof(highSwingSound[0]);
-    int humArrSize = sizeof(humSound) / sizeof(humSound[0]);
+    long lswingArrSize = sizeof(lowSwingSound) / sizeof(lowSwingSound[0]);
+    long hswingArrSize = sizeof(highSwingSound) / sizeof(highSwingSound[0]);
+    long humArrSize = sizeof(humSound) / sizeof(humSound[0]);
 
     i = (i + audioSpeed) % (lswingArrSize/ 2 - 1);
     i2 = (i2 + audioSpeed) % (hswingArrSize/ 2 - 1);
     i3 = (i3 + audioSpeed) % (humArrSize / 2 - 1) ;
 
-     int lswingSample = (((pgm_read_byte(&(lowSwingSound[(int)i * 2]))) | (pgm_read_byte(&(lowSwingSound[(int)i * 2 + 1]))) << 8) >> 6);      //16bit to 10bit
-     int hswingSample = (((pgm_read_byte(&(highSwingSound[(int)i2 * 2]))) | (pgm_read_byte(&(highSwingSound[(int)i2 * 2 + 1]))) << 8) >> 6);  //16bit to 10bit
-    int humSample = (((pgm_read_byte(&(humSound[(int)i3 * 2]))) | (pgm_read_byte(&(humSound[(int)i3 * 2 + 1]))) << 8) >> 6);                 //16bit to 10bit
+    //little endian
+     int16_t  lswingSample = ((int16_t )((pgm_read_byte(&(lowSwingSound[i * 2]))) | (pgm_read_byte(&(lowSwingSound[i * 2 + 1]))) << 8) >> 6);      //16bit to 10bit
+     int16_t  hswingSample = ((int16_t )((pgm_read_byte(&(highSwingSound[i2 * 2]))) | (pgm_read_byte(&(highSwingSound[i2 * 2 + 1]))) << 8) >> 6);  //16bit to 10bit Shifts are padded with zero!
+    int16_t  humSample = ((int16_t )((pgm_read_byte(&(humSound[i3 * 2]))) | (pgm_read_byte(&(humSound[i3 * 2 + 1]))) << 8) >> 6);                 //16bit to 10bit
 
 
     
     // lswingSample = 0;
     // hswingSample = 0;
-    // sound_out = (lswingSample * actual_lswingVolume + hswingSample * actual_hswingVolume + humSample * actual_humVolume  ) / 6;
-      // sound_out = lswingSample * actual_lswingVolume;
-        sound_out = (lswingSample * lswingVolume + hswingSample * hswingVolume  ) / 4;
-    sound_out = constrain(sound_out, 0, 1023);
+     sound_out = (lswingSample * lswingVolume + hswingSample * hswingVolume + humSample * humVolume  ) *4;
+      // sound_out = lswingSample ;
+       // sound_out = (lswingSample * lswingVolume + hswingSample * hswingVolume  ) / 4;
+    sound_out = constrain(sound_out, -511, 512);
     
     //Serial.println(sound_out);
     //sound_out = hswingSample;
     //sound_out = humSample * humVolume;
-    ledcWrite(1, sound_out );  //PWM output first arg is the channel attached via ledcAttachPin()
+    ledcWrite(1, sound_out +511);  //PWM output first arg is the channel attached via ledcAttachPin()
   }
 
   // Allow be interrupts
@@ -190,12 +191,12 @@ void setup() {
 }
 
 
-#define VOLUME_LERP 1
-void updateVolume() {
-  actual_lswingVolume = lswingVolume * VOLUME_LERP + actual_lswingVolume * (1 - VOLUME_LERP);
-  actual_hswingVolume = hswingVolume * VOLUME_LERP + actual_hswingVolume * (1 - VOLUME_LERP);
-  actual_humVolume = humVolume * VOLUME_LERP + actual_humVolume * (1 - VOLUME_LERP);
-}
+// #define VOLUME_LERP 1
+// void updateVolume() {
+//   actual_lswingVolume = lswingVolume * VOLUME_LERP + actual_lswingVolume * (1 - VOLUME_LERP);
+//   actual_hswingVolume = hswingVolume * VOLUME_LERP + actual_hswingVolume * (1 - VOLUME_LERP);
+//   actual_humVolume = humVolume * VOLUME_LERP + actual_humVolume * (1 - VOLUME_LERP);
+// }
 
 void loop() {
   //-------------------------pitch setting----------------------------------
@@ -210,8 +211,13 @@ void loop() {
    Vec3 raw_gyro_converted =  Vec3(raw_gyro.x, raw_gyro.y, raw_gyro.z);
    SB_Motion(raw_gyro_converted, false);
   }
-  updateVolume();
-Serial.println(sound_out);
+  // updateVolume();
+  Serial.println("SET");
+// Serial.println(pgm_read_byte(&(lowSwingSound[i * 2])));
+// Serial.println((int16_t )((pgm_read_byte(&(lowSwingSound[i * 2]))) | (pgm_read_byte(&(lowSwingSound[i * 2 + 1]))) << 8));
+ Serial.println(sound_out);
+  // int lswingSample = (((pgm_read_byte(&(lowSwingSound[i * 2]))) | (pgm_read_byte(&(lowSwingSound[i * 2 + 1]))) << 8) >> 6);  
+
   // int choice = 0;
   // if (Serial.available() != 0) {
     

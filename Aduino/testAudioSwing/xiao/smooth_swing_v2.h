@@ -1,7 +1,7 @@
 #define SwingStrengthThreshold 80.0f
 #define Transition1Degrees 45.0f
 #define Transition2Degrees 160.0f
-float SwingSensitivity = 2000.0f; // Rad/s that caps outs the sound volumeOriginal 450.0f
+float SwingSensitivity = 20000.0f; // Rad/s that caps outs the sound volumeOriginal 450.0f
 #define MaximumHumDucking 75.0f // Orig 75
 float SwingSharpness = 1.5f; // Orig 1.75f
 float MaxSwingVolume = 3.0f; // Orig 3.0
