@@ -67,13 +67,15 @@ void IRAM_ATTR onTimer() {
     
     // lswingSample = 0;
     // hswingSample = 0;
-    sound_out = (lswingSample * actual_lswingVolume + hswingSample * actual_hswingVolume + humSample * actual_humVolume  ) / 6;
-    sound_out = constrain(sound_out, -511, 511);
-    //sound_out = (lswingSample * lswingVolume + hswingSample * hswingVolume  ) / 6;
+    // sound_out = (lswingSample * actual_lswingVolume + hswingSample * actual_hswingVolume + humSample * actual_humVolume  ) / 6;
+      // sound_out = lswingSample * actual_lswingVolume;
+        sound_out = (lswingSample * lswingVolume + hswingSample * hswingVolume  ) / 4;
+    sound_out = constrain(sound_out, 0, 1023);
+    
     //Serial.println(sound_out);
     //sound_out = hswingSample;
     //sound_out = humSample * humVolume;
-    ledcWrite(1, sound_out + 511);  //PWM output first arg is the channel attached via ledcAttachPin()
+    ledcWrite(1, sound_out );  //PWM output first arg is the channel attached via ledcAttachPin()
   }
 
   // Allow be interrupts
@@ -209,7 +211,7 @@ void loop() {
    SB_Motion(raw_gyro_converted, false);
   }
   updateVolume();
-
+Serial.println(sound_out);
   // int choice = 0;
   // if (Serial.available() != 0) {
     

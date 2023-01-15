@@ -1,7 +1,7 @@
 #define SwingStrengthThreshold 80.0f
 #define Transition1Degrees 45.0f
 #define Transition2Degrees 160.0f
-float SwingSensitivity = 2000.0f; // Original 450.0f Lower is more sensistive
+float SwingSensitivity = 2000.0f; // Rad/s that caps outs the sound volumeOriginal 450.0f
 #define MaximumHumDucking 75.0f // Orig 75
 float SwingSharpness = 1.5f; // Orig 1.75f
 float MaxSwingVolume = 3.0f; // Orig 3.0
@@ -70,7 +70,7 @@ void Swap() {
       Swap();
     }
 
-    float t1_offset = random(1000) / 1000.0 * 50 + 10;
+    float t1_offset = random(1000) / 1000.0 * 50 + 10; // 10-60 Degrees  : Center of transition region
     A.SetTransition(t1_offset, 45.0f);         // 10- 60 degrees, 45.0f
     B.SetTransition(t1_offset + 180.0, 160.0f); // 190 - 240degrees, 160f default
   }
@@ -110,7 +110,7 @@ void SB_Motion(const Vec3 &raw_gyro, bool clear) {
         float swing_strength = min(1.0f, speed / SwingSensitivity);
 
         // 50000000 was a good value below
-        A.rotate(-speed * delta / 80000000.0);  // This shifts the midpoint of the swing, it accumulates.
+        A.rotate(-speed * delta / 11000000.0);  // This shifts the midpoint of the swing, it accumulates.
      // A.rotate(-speed * delta / 1000000.0); // Th
         // original value is 1000000.0
         // Reache the midpoint of the swing here
@@ -118,7 +118,7 @@ void SB_Motion(const Vec3 &raw_gyro, bool clear) {
         // and set the next transition to be 180 degrees from the one
         // that is done.
         while (A.end() < 0.0) {
-          Serial.println("TRANSITION");
+          Serial.println("SWAP, Should happen in the middle of the a swing");
           B.midpoint = A.midpoint + 180.0;
           Swap();
         }
@@ -143,16 +143,16 @@ void SB_Motion(const Vec3 &raw_gyro, bool clear) {
           // Serial.print(A.begin());
           // Serial.print(" \tE: ");
           // Serial.print(A.end());
-          Serial.print(" \t,lvol: ");
-          Serial.print(lswingVolume);
-          Serial.print(" \t,hvol: ");
-          Serial.print(hswingVolume);
-          Serial.print(" \t,mixhum: ");
-          Serial.print(mixhum);
-          Serial.print(" \t,mixab: ");
-          Serial.print(mixab);
-          Serial.print(" \t,hum_volume: ");
-          Serial.println(hum_volume);
+          // Serial.print(" \t,lvol: ");
+          // Serial.print(lswingVolume);
+          // Serial.print(" \t,hvol: ");
+          // Serial.print(hswingVolume);
+          // Serial.print(" \t,mixhum: ");
+          // Serial.print(mixhum);
+          // Serial.print(" \t,mixab: ");
+          // Serial.print(mixab);
+          // Serial.print(" \t,hum_volume: ");
+          // Serial.println(hum_volume);
  
 
           if (flip) {
