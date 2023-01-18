@@ -1,6 +1,6 @@
 // ---------------------------- PINOUT -------------------------------
 #define AUDIO_PIN D7
-#define BUTTON_PIN A0
+#define BUTTON_PIN D1
 #define LED_PIN D8
 
 // ---------------------------- Libraries -------------------------------
@@ -22,7 +22,10 @@
 #include "Wire.h"
 #endif
 
-
+// -- Button
+#define BUTTON_WINDOW_SIZE 40
+#define BUTTON_PRESS_THRESHOLD 50
+int avgButtonVal = 2 * BUTTON_PRESS_THRESHOLD;
 
 // ---------------------------- MP3 -------------------------------
 // #define GENERAL_SOUND_FOLDER 1
@@ -527,12 +530,12 @@ void igniteSaber() {
 
 bool isButtonPressed() {
   int buttonVal = analogRead(BUTTON_PIN);
-  // Serial.println(buttonVal);
-  if (buttonVal == 255) {
+  if (avgButtonVal > 50) {
+    return false;
+
+  } else {
     return true;
   }
-
-  return false;
 }
 
 
@@ -668,7 +671,9 @@ void loop() {
 
   curState->run();
 
-  // Serial.println(sound_out);
+  byte buttonState = analogRead(BUTTON_PIN);
+  avgButtonVal -= avgButtonVal / BUTTON_WINDOW_SIZE;
+  avgButtonVal += (float)(2 * buttonState) / BUTTON_WINDOW_SIZE;
 }
 
 void setupStates() {
@@ -798,7 +803,7 @@ void setupAudio() {
 }
 
 void setupGeneral() {
-  pinMode(BUTTON_PIN, INPUT);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
   randomSeed(analogRead(0));
   Serial.begin(115200);
   while (!Serial) {

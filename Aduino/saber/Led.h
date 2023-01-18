@@ -51,7 +51,7 @@ void IgniteLED(uint32_t color, uint8_t duration, uint32_t tipcolor, uint8_t tran
   Serial.println("igniting LEDS");
     uint16_t j, led;
     (led = 0);
-    static bool ongoing = true;
+    bool ongoing = true;
     while (ongoing)
     {
         for (j = 0; j <= 147; j++)

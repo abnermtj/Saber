@@ -1,22 +1,27 @@
-#define BUTTON_PIN A0
+#define BUTTON_PIN D1
 #define LED_PIN D8
+#define BUTTON_WINDOW_SIZE 40
+int avgButtonVal = 100;
 void setup()
 {
   Serial.begin(115200);
-  pinMode(BUTTON_PIN, INPUT);
+   analogReadResolution(10);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
    pinMode(D7, OUTPUT);
     pinMode(LED_PIN, OUTPUT);
 }
 void loop()
 {
   byte buttonState = analogRead(BUTTON_PIN);
-  
-  Serial.println(buttonState);
+  avgButtonVal -= avgButtonVal / BUTTON_WINDOW_SIZE;
+  avgButtonVal += (float)(2 * buttonState) / BUTTON_WINDOW_SIZE;
+  // Serial.println(buttonState);
 
-  if (buttonState > 150) {
-    Serial.println("NOT PRESSED");
+  if (avgButtonVal > 50) {
+    // Serial.println("NOT PRESSED");
     
   } else {
     Serial.println(" PRESSED");
+    Serial.println(buttonState);
   }
-  delay(100);}
+  delay(1);}
